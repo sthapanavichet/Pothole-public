@@ -36,6 +36,9 @@ if ($LASTEXITCODE -ne 0) { throw "Second LaTeX pass failed." }
 $pdfOut = Join-Path $repoRoot "submission/project_integration_submission.pdf"
 if (Test-Path $pdfOut) {
     Write-Host "PDF generated:" $pdfOut
+    $rootPdfOut = Join-Path $repoRoot "project_integration_submission.pdf"
+    Copy-Item -Path $pdfOut -Destination $rootPdfOut -Force
+    Write-Host "PDF copied to repo root:" $rootPdfOut
 } else {
     throw "Build finished but PDF not found at expected path: $pdfOut"
 }

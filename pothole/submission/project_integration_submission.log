@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.28 (MiKTeX 25.12) (preloaded format=pdflatex 2026.5.22)  22 MAY 2026 01:03
+This is pdfTeX, Version 3.141592653-2.6-1.40.28 (MiKTeX 25.12) (preloaded format=pdflatex 2026.5.22)  22 MAY 2026 12:15
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -257,8 +257,8 @@ pdftex.def
 File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
 \l__color_backend_stack_int=\count302
 )
-(C:\Users\brundern\Desktop\pothole\submission\project_integration_submission.au
-x)
+(C:\Users\brundern\Desktop\pothole\pothole\submission\project_integration_submi
+ssion.aux)
 \openout1 = `project_integration_submission.aux'.
 
 LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 18.
@@ -342,10 +342,10 @@ File: epstopdf-sys.cfg 2021/03/18 v2.0 Configuration of epstopdf for MiKTeX
 ))
 Package hyperref Info: Link coloring OFF on input line 18.
 
-(C:\Users\brundern\Desktop\pothole\submission\project_integration_submission.ou
-t)
-(C:\Users\brundern\Desktop\pothole\submission\project_integration_submission.ou
-t)
+(C:\Users\brundern\Desktop\pothole\pothole\submission\project_integration_submi
+ssion.out)
+(C:\Users\brundern\Desktop\pothole\pothole\submission\project_integration_submi
+ssion.out)
 \@outlinefile=\write4
 \openout4 = `project_integration_submission.out'.
 
@@ -356,78 +356,79 @@ LaTeX Font Info:    External font `cmex10' loaded for size
 LaTeX Font Info:    External font `cmex10' loaded for size
 (Font)              <6> on input line 20.
 
-(C:\Users\brundern\Desktop\pothole\submission\project_integration_submission.to
-c)
+(C:\Users\brundern\Desktop\pothole\pothole\submission\project_integration_submi
+ssion.toc)
 \tf@toc=\write5
 \openout5 = `project_integration_submission.toc'.
 
  [1
 
-{C:/Users/brundern/AppData/Local/MiKTeX/fonts/map/pdftex/pdftex.map}]
-[2] [3] [4]
-<../screenshots/issue_student_1.png, id=57, 1806.75pt x 1204.5pt>
+{C:/Users/brundern/AppData/Local/MiKTeX/fonts/map/pdftex/pdftex.map}] [2] [3] [
+4] [5] [6] [7] [8]
+<../screenshots/issue_student_1.png, id=94, 633.36626pt x 544.0325pt>
 File: ../screenshots/issue_student_1.png Graphic file (type png)
 <use ../screenshots/issue_student_1.png>
 Package pdftex.def Info: ../screenshots/issue_student_1.png  used on input line
- 43.
-(pdftex.def)             Requested size: 469.75502pt x 313.16261pt.
-<../screenshots/issue_student_2.png, id=58, 1806.75pt x 1204.5pt>
+ 61.
+(pdftex.def)             Requested size: 469.75502pt x 403.50749pt.
+<../screenshots/issue_student_2.png, id=96, 633.36626pt x 544.0325pt>
 File: ../screenshots/issue_student_2.png Graphic file (type png)
 <use ../screenshots/issue_student_2.png>
 Package pdftex.def Info: ../screenshots/issue_student_2.png  used on input line
- 49.
-(pdftex.def)             Requested size: 469.75502pt x 313.16261pt.
- [5 <C:/Users/brundern/Desktop/pothole/screenshots/issue_student_1.png (PNG cop
-y)>]
-<../screenshots/issue_student_3.png, id=64, 1806.75pt x 1204.5pt>
+ 67.
+(pdftex.def)             Requested size: 469.75502pt x 403.50749pt.
+ [9 <C:/Users/brundern/Desktop/pothole/pothole/screenshots/issue_student_1.png>
+]
+<../screenshots/issue_student_3.png, id=103, 633.36626pt x 544.0325pt>
 File: ../screenshots/issue_student_3.png Graphic file (type png)
 <use ../screenshots/issue_student_3.png>
 Package pdftex.def Info: ../screenshots/issue_student_3.png  used on input line
- 55.
-(pdftex.def)             Requested size: 469.75502pt x 313.16261pt.
- [6 <C:/Users/brundern/Desktop/pothole/screenshots/issue_student_2.png (PNG cop
-y)>]
-<../screenshots/issue_student_4.png, id=70, 1806.75pt x 1204.5pt>
+ 73.
+(pdftex.def)             Requested size: 469.75502pt x 403.50749pt.
+ [10 <C:/Users/brundern/Desktop/pothole/pothole/screenshots/issue_student_2.png
+>]
+<../screenshots/issue_student_4.png, id=110, 633.36626pt x 587.19376pt>
 File: ../screenshots/issue_student_4.png Graphic file (type png)
 <use ../screenshots/issue_student_4.png>
 Package pdftex.def Info: ../screenshots/issue_student_4.png  used on input line
- 61.
-(pdftex.def)             Requested size: 469.75502pt x 313.16261pt.
- [7 <C:/Users/brundern/Desktop/pothole/screenshots/issue_student_3.png (PNG cop
-y)>] [8 <C:/Users/brundern/Desktop/pothole/screenshots/issue_student_4.png (PNG
- copy)>]
-<../screenshots/milestones.png, id=82, 1806.75pt x 1204.5pt>
+ 79.
+(pdftex.def)             Requested size: 469.75502pt x 435.52008pt.
+ [11 <C:/Users/brundern/Desktop/pothole/pothole/screenshots/issue_student_3.png
+>] [12 <C:/Users/brundern/Desktop/pothole/pothole/screenshots/issue_student_4.p
+ng>]
+<../screenshots/milestones.png, id=123, 1806.75pt x 1204.5pt>
 File: ../screenshots/milestones.png Graphic file (type png)
 <use ../screenshots/milestones.png>
-Package pdftex.def Info: ../screenshots/milestones.png  used on input line 69.
+Package pdftex.def Info: ../screenshots/milestones.png  used on input line 91.
 (pdftex.def)             Requested size: 469.75502pt x 313.16261pt.
- [9 <C:/Users/brundern/Desktop/pothole/screenshots/milestones.png (PNG copy)>]
-<../screenshots/kanban_board.png, id=88, 1806.75pt x 1204.5pt>
+ [13] [14 <C:/Users/brundern/Desktop/pothole/pothole/screenshots/milestones.png
+ (PNG copy)>]
+<../screenshots/kanban_board.png, id=134, 1806.75pt x 1204.5pt>
 File: ../screenshots/kanban_board.png Graphic file (type png)
 <use ../screenshots/kanban_board.png>
-Package pdftex.def Info: ../screenshots/kanban_board.png  used on input line 77
-.
+Package pdftex.def Info: ../screenshots/kanban_board.png  used on input line 10
+3.
 (pdftex.def)             Requested size: 469.75502pt x 313.16261pt.
- [10 <C:/Users/brundern/Desktop/pothole/screenshots/kanban_board.png (PNG copy)
->]
-(C:\Users\brundern\Desktop\pothole\submission\project_integration_submission.au
-x)
+ [15] [16 <C:/Users/brundern/Desktop/pothole/pothole/screenshots/kanban_board.p
+ng (PNG copy)>] [17]
+(C:\Users\brundern\Desktop\pothole\pothole\submission\project_integration_submi
+ssion.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2025-12-24>
  ***********
 Package rerunfilecheck Info: File `project_integration_submission.out' has not 
 changed.
-(rerunfilecheck)             Checksum: BF23F04710E40D8BE1D5FE8EBBE871AD;824.
+(rerunfilecheck)             Checksum: 4BF7A67DF235DC47002A79E0044EAC64;1619.
  ) 
 Here is how much of TeX's memory you used:
- 9958 strings out of 467870
- 156017 string characters out of 5416903
- 574927 words of memory out of 5000000
- 38713 multiletter control sequences out of 15000+600000
+ 9980 strings out of 467870
+ 156345 string characters out of 5416903
+ 575921 words of memory out of 5000000
+ 38717 multiletter control sequences out of 15000+600000
  636382 words of font info for 58 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 75i,6n,79p,457b,442s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,6n,79p,326b,653s stack positions out of 10000i,1000n,20000p,200000b,200000s
  <C:\Users\brundern\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\e
 ctt1000.pk> <C:\Users\brundern\AppData\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec
 /dpi600\ecti1095.pk> <C:\Users\brundern\AppData\Local\MiKTeX\fonts/pk/ljfour/jk
@@ -436,10 +437,10 @@ ljfour/jknappen/ec/dpi600\ecbx1095.pk> <C:\Users\brundern\AppData\Local\MiKTeX\
 fonts/pk/ljfour/jknappen/ec/dpi600\ecbx1200.pk> <C:\Users\brundern\AppData\Loca
 l\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\ecrm1200.pk> <C:\Users\brundern\App
 Data\Local\MiKTeX\fonts/pk/ljfour/jknappen/ec/dpi600\ecrm1728.pk>
-Output written on C:\Users\brundern\Desktop\pothole\submission\project_integrat
-ion_submission.pdf (10 pages, 541250 bytes).
+Output written on C:\Users\brundern\Desktop\pothole\pothole\submission\project_
+integration_submission.pdf (17 pages, 593443 bytes).
 PDF statistics:
- 381 PDF objects out of 1000 (max. 8388607)
- 23 named destinations out of 1000 (max. 500000)
- 79 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 480 PDF objects out of 1000 (max. 8388607)
+ 34 named destinations out of 1000 (max. 500000)
+ 111 words of extra memory for PDF output out of 10000 (max. 10000000)
 
