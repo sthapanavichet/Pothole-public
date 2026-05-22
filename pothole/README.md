@@ -4,10 +4,10 @@
 
 | Name | Email | Role |
 |---|---|---|
-| Atem Ako | member1@school.edu | Project Manager |
-| Amir Abdalla | member2@school.edu | Backend Developer |
-| Nahaeli Brunder | member3@school.edu | Systems "Engineer" |
-| Sthapanavichet Long | member4@school.edu | QA and Documentation |
+| Atem Ako | atem-ako-eyong-atem@myseneca.ca| Project Manager |
+| Amir Abdalla | aabdalla14@myseneca.ca | Backend Developer |
+| Nahaeli Brunder | nbrunder@myseneca.ca | Systems "Engineer" |
+| Sthapanavichet Long | slong17@myseneca.ca | QA and Documentation |
 
 ## Project Description
 
