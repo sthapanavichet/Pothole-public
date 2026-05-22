@@ -1,7 +1,5 @@
 ﻿# Milestones Plan
 
-Create these milestones in GitHub and assign issues accordingly.
-
 1. Hardware Integration
 - Scope: CAD enclosure design, IoT module fit, mounting validation
 - Example linked issues:
