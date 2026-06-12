@@ -52,7 +52,7 @@ Planned integration tests include:
 * Video processing with a short test video.
 * Model inference wrapper with a sample image.
 * Backend upload endpoint with media validation.
-* Frontend-to-backend communication if a frontend is added.
+* Frontend-to-backend communication.
 
 Full YOLO model tests should not run in every CI check because model files are large and inference can be slow. These tests should run manually or in a separate scheduled workflow.
 
