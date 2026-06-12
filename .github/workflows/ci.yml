@@ -1,0 +1,31 @@
+name: CI Pipeline
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-ci:
+    name: Python Tests and Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python QA dependencies
+        run: python -m pip install --upgrade pip pytest ruff
+
+      - name: Run Python static analysis
+        run: ruff check .
+
+      - name: Run Python tests
+        run: pytest tests -p no:cacheprovider
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
