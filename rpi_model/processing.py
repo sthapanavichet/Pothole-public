@@ -68,16 +68,6 @@ def process_frame(frame_rgb):
         radius_int = int(radius)
         cv2.circle(detection_view, center, radius_int, (0, 255, 0), 2)
         cv2.circle(detection_view, center, 3, (0, 255, 255), -1)
-        cv2.putText(
-            detection_view,
-            str(count),
-            (center[0] - 10, center[1] - radius_int - 8),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2,
-            cv2.LINE_AA,
-        )
 
     return frame_bgr, detection_view, edges, count
 

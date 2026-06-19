@@ -8,6 +8,8 @@ import signal
 import sys
 import threading
 import time
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import cv2
 from flask import Flask, Response, jsonify
@@ -27,12 +29,36 @@ from utils import calculate_fps, ensure_output_dir
 
 app = Flask(__name__)
 
+LOCATION_ENDPOINT = "http://ip-api.com/json/?fields=status,message,lat,lon"
+
 
 def save_output_frame(output_dir, frame_index, frame):
     """Save a frame to disk using a simple periodic naming scheme."""
     filename = os.path.join(output_dir, f"detections_{frame_index:06d}.png")
     if not cv2.imwrite(filename, frame):
         raise RuntimeError(f"Failed to write output frame: {filename}")
+
+
+def fetch_location_text() -> str:
+    """Fetch the Pi's approximate public-IP location as raw latitude/longitude text."""
+    try:
+        with urlopen(LOCATION_ENDPOINT, timeout=5) as response:
+            payload = response.read().decode("utf-8")
+    except (OSError, URLError) as exc:
+        print(f"Location lookup failed: {exc}", file=sys.stderr)
+        return "unavailable"
+
+    try:
+        import json
+
+        data = json.loads(payload)
+    except ValueError:
+        return payload
+
+    if data.get("status") != "success":
+        return data.get("message", payload)
+
+    return f"lat: {data.get('lat')}, lon: {data.get('lon')}"
 
 
 class VisionPipelineServer:
@@ -50,12 +76,14 @@ class VisionPipelineServer:
         self.latest_edges_jpeg = None
         self.latest_detection_count = 0
         self.detection_log = deque(maxlen=DETECTION_LOG_LIMIT)
+        self.location_text = "unavailable"
 
     def start(self) -> None:
         """Start the camera and the background capture loop."""
         if SAVE_OUTPUT:
             ensure_output_dir(OUTPUT_DIR)
 
+        self.location_text = fetch_location_text()
         self.camera.start()
         self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.capture_thread.start()
@@ -76,7 +104,7 @@ class VisionPipelineServer:
                 frame_rgb = self.camera.capture_frame()
                 frame_bgr, detection_view, edges, count = process_frame(frame_rgb)
 
-                fps, self.prev_time = calculate_fps(self.prev_time)
+                _, self.prev_time = calculate_fps(self.prev_time)
 
                 original_jpeg = self._encode_jpeg(frame_bgr)
                 edges_jpeg = self._encode_jpeg(detection_view)
@@ -84,7 +112,7 @@ class VisionPipelineServer:
                 with self.lock:
                     self.latest_original_jpeg = original_jpeg
                     self.latest_edges_jpeg = edges_jpeg
-                    self._record_detection_event(count, fps)
+                    self._record_detection_event(count)
 
                 self.frame_ready.set()
 
@@ -117,7 +145,7 @@ class VisionPipelineServer:
                 return self.latest_edges_jpeg
         raise ValueError(f"Unknown stream name: {stream_name}")
 
-    def _record_detection_event(self, count, fps) -> None:
+    def _record_detection_event(self, count) -> None:
         """Log a detection when the positive object count changes."""
         if count <= 0:
             self.latest_detection_count = 0
@@ -131,9 +159,8 @@ class VisionPipelineServer:
             {
                 "id": self.frame_index,
                 "time": time.strftime("%H:%M:%S"),
-                "count": count,
-                "fps": round(fps, 2),
                 "label": "black circle",
+                "location": self.location_text,
             }
         )
 
@@ -172,73 +199,26 @@ def index():
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pi Vision Pipeline</title>
-  <style>
-    body {
-      background: white;
-      color: black;
-      font-family: Arial, Helvetica, sans-serif;
-      margin: 20px;
-    }
-    h1 {
-      font-size: 28px;
-      margin: 0 0 16px;
-    }
-    h2 {
-      font-size: 20px;
-      margin: 24px 0 10px;
-    }
-    img {
-      border: 1px solid black;
-      display: block;
-      max-width: 900px;
-      width: 100%;
-    }
-    .log-count {
-      font-size: 14px;
-      margin-bottom: 8px;
-    }
-    table {
-      border-collapse: collapse;
-      max-width: 900px;
-      width: 100%;
-    }
-    th,
-    td {
-      border: 1px solid black;
-      padding: 6px 8px;
-      text-align: left;
-    }
-    th {
-      background: #eeeeee;
-    }
-    .numeric {
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-    }
-    .empty-row {
-      text-align: center;
-    }
-  </style>
 </head>
 <body>
   <h1>Pi Vision Pipeline</h1>
 
   <h2>Detection Feed</h2>
-  <img src="/stream/edges.mjpg" alt="Live detection feed">
+  <img src="/stream/edges.mjpg" alt="Live detection feed" width="640">
 
   <h2>Reported Detections</h2>
-  <div class="log-count" id="log-count">0 events</div>
-  <table>
+  <p id="log-count">0 events</p>
+  <table border="1" cellpadding="5" cellspacing="0">
     <thead>
       <tr>
         <th>Time</th>
         <th>Detected Item</th>
-        <th>Count</th>
+        <th>Location</th>
       </tr>
     </thead>
     <tbody id="detection-log">
       <tr>
-        <td class="empty-row" colspan="3">Waiting for detected objects...</td>
+        <td colspan="3">Waiting for detected objects...</td>
       </tr>
     </tbody>
   </table>
@@ -254,15 +234,15 @@ def index():
       logCountElement.textContent = `${events.length} ${events.length === 1 ? "event" : "events"}`;
 
       if (!events.length) {
-        logElement.innerHTML = '<tr><td class="empty-row" colspan="3">Waiting for detected objects...</td></tr>';
+        logElement.innerHTML = '<tr><td colspan="3">Waiting for detected objects...</td></tr>';
         return;
       }
 
       logElement.innerHTML = events.map((event) => `
         <tr>
-          <td class="numeric">${event.time}</td>
+          <td>${event.time}</td>
           <td>${formatDetectedItem(event)}</td>
-          <td class="numeric">${event.count}</td>
+          <td>${event.location}</td>
         </tr>
       `).join("");
     }
@@ -276,7 +256,7 @@ def index():
         const events = await response.json();
         renderDetectionLog(events);
       } catch (error) {
-        logElement.innerHTML = '<tr><td class="empty-row" colspan="3">Detection log unavailable.</td></tr>';
+        logElement.innerHTML = '<tr><td colspan="3">Detection log unavailable.</td></tr>';
       }
     }
 
