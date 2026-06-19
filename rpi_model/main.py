@@ -207,7 +207,6 @@ def index():
   <img src="/stream/edges.mjpg" alt="Live detection feed" width="640">
 
   <h2>Reported Detections</h2>
-  <p id="log-count">0 events</p>
   <table border="1" cellpadding="5" cellspacing="0">
     <thead>
       <tr>
@@ -224,15 +223,12 @@ def index():
   </table>
   <script>
     const logElement = document.getElementById("detection-log");
-    const logCountElement = document.getElementById("log-count");
 
     function formatDetectedItem(event) {
       return event.label;
     }
 
     function renderDetectionLog(events) {
-      logCountElement.textContent = `${events.length} ${events.length === 1 ? "event" : "events"}`;
-
       if (!events.length) {
         logElement.innerHTML = '<tr><td colspan="3">Waiting for detected objects...</td></tr>';
         return;
