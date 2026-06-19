@@ -85,7 +85,7 @@ Run the automated test suite from inside the `rpi_model/` folder:
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-The suite includes:
+The current suite includes:
 
 - unit tests for helpers in `utils.py`
 - processing tests for `processing.py`
@@ -93,6 +93,26 @@ The suite includes:
 - Flask route tests for the lightweight API in `main.py`
 
 GitHub Actions runs the same command automatically on push and pull request through `.github/workflows/python-tests.yml`.
+
+### Implemented Coverage
+
+- `tests/test_utils.py`: unit tests for FPS calculation and output directory creation
+- `tests/test_processing.py`: unit tests for frame conversion, contour detection, and status overlays
+- `tests/test_camera.py`: unit tests for the camera wrapper using a mocked `Picamera2`
+- `tests/test_main.py`: unit tests for frame saving and detection logging, plus route-level integration/API tests for `/` and `/detections.json`
+
+### Not Yet Implemented
+
+These test types are still missing and would improve confidence before deployment:
+
+- live hardware tests against a real Raspberry Pi Camera Module
+- full end-to-end tests that start the Flask app and exercise the MJPEG streams
+- explicit tests for `/stream/original.mjpg` and `/stream/edges.mjpg`
+- failure-path tests for camera startup, frame capture errors, and stream interruption handling
+- tests for `SAVE_OUTPUT=True` that verify files are written to `outputs/`
+- shutdown and signal-handling tests for the `main()` runtime loop
+- browser/UI tests for the dashboard JavaScript and polling behavior
+- performance/regression tests for FPS and detection count consistency across repeated frames
 
 ## Verify The Camera
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Unit tests for the camera wrapper with mocked hardware.
+
 import importlib
 import sys
 import types
@@ -74,4 +76,3 @@ class CameraManagerTests(unittest.TestCase):
                 manager.start()
 
             self.assertIn("Failed to start camera", str(ctx.exception))
-

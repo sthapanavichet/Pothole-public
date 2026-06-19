@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Unit tests for image processing and detection helpers.
+
 import unittest
 
 import cv2
@@ -32,4 +34,3 @@ class DrawStatusTests(unittest.TestCase):
         result = processing.draw_status(frame.copy(), 12.34, 2)
 
         self.assertEqual(result.shape, frame.shape)
-
