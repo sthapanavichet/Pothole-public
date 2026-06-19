@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import os
 import signal
 import sys
@@ -9,10 +10,18 @@ import threading
 import time
 
 import cv2
-from flask import Flask, Response
+from flask import Flask, Response, jsonify
 
 from camera import CameraManager
-from config import JPEG_QUALITY, OUTPUT_DIR, SAVE_INTERVAL, SAVE_OUTPUT, STREAM_HOST, STREAM_PORT
+from config import (
+    DETECTION_LOG_LIMIT,
+    JPEG_QUALITY,
+    OUTPUT_DIR,
+    SAVE_INTERVAL,
+    SAVE_OUTPUT,
+    STREAM_HOST,
+    STREAM_PORT,
+)
 from processing import draw_status, process_frame
 from utils import calculate_fps, ensure_output_dir
 
@@ -39,6 +48,8 @@ class VisionPipelineServer:
         self.capture_thread = None
         self.latest_original_jpeg = None
         self.latest_edges_jpeg = None
+        self.latest_detection_count = 0
+        self.detection_log = deque(maxlen=DETECTION_LOG_LIMIT)
 
     def start(self) -> None:
         """Start the camera and the background capture loop."""
@@ -75,6 +86,7 @@ class VisionPipelineServer:
                 with self.lock:
                     self.latest_original_jpeg = original_jpeg
                     self.latest_edges_jpeg = edges_jpeg
+                    self._record_detection_event(count, fps)
 
                 self.frame_ready.set()
 
@@ -106,6 +118,31 @@ class VisionPipelineServer:
             if stream_name == "edges":
                 return self.latest_edges_jpeg
         raise ValueError(f"Unknown stream name: {stream_name}")
+
+    def _record_detection_event(self, count, fps) -> None:
+        """Log a detection when the positive object count changes."""
+        if count <= 0:
+            self.latest_detection_count = 0
+            return
+
+        if count == self.latest_detection_count:
+            return
+
+        self.latest_detection_count = count
+        self.detection_log.appendleft(
+            {
+                "id": self.frame_index,
+                "time": time.strftime("%H:%M:%S"),
+                "count": count,
+                "fps": round(fps, 2),
+                "label": "paper object",
+            }
+        )
+
+    def get_detection_log(self):
+        """Return recent detections for the dashboard."""
+        with self.lock:
+            return list(self.detection_log)
 
 
 pipeline = VisionPipelineServer()
@@ -191,6 +228,68 @@ def index():
       color: #86efac;
       font-size: 14px;
     }
+    .log-panel {
+      margin-top: 20px;
+    }
+    .log-header {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .log-header h2 {
+      margin: 0;
+    }
+    .log-count {
+      color: #86efac;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    .detection-log {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      list-style: none;
+      margin: 16px 0 0;
+      max-height: 280px;
+      overflow-y: auto;
+      padding: 0;
+    }
+    .detection-log li {
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 90px 1fr auto;
+      padding: 12px 14px;
+    }
+    .detection-log li:last-child {
+      border-bottom: 0;
+    }
+    .detected-time {
+      color: #94a3b8;
+      font-variant-numeric: tabular-nums;
+    }
+    .detected-label {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .detected-meta {
+      color: #cbd5e1;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    .empty-log {
+      color: #94a3b8;
+      padding: 18px;
+    }
+    @media (max-width: 640px) {
+      .detection-log li {
+        grid-template-columns: 1fr;
+      }
+      .detected-meta {
+        white-space: normal;
+      }
+    }
   </style>
 </head>
 <body>
@@ -209,7 +308,58 @@ def index():
         <div class="tag">Dark circular blobs outlined and counted</div>
       </section>
     </div>
+    <section class="panel log-panel">
+      <div class="log-header">
+        <h2>Detection Log</h2>
+        <span class="log-count" id="log-count">0 events</span>
+      </div>
+      <ul class="detection-log" id="detection-log">
+        <li class="empty-log">Waiting for detected objects...</li>
+      </ul>
+    </section>
   </main>
+  <script>
+    const logElement = document.getElementById("detection-log");
+    const logCountElement = document.getElementById("log-count");
+
+    function formatEventText(event) {
+      const objectText = event.count === 1 ? "object" : "objects";
+      return `${event.count} ${objectText} detected`;
+    }
+
+    function renderDetectionLog(events) {
+      logCountElement.textContent = `${events.length} ${events.length === 1 ? "event" : "events"}`;
+
+      if (!events.length) {
+        logElement.innerHTML = '<li class="empty-log">Waiting for detected objects...</li>';
+        return;
+      }
+
+      logElement.innerHTML = events.map((event) => `
+        <li>
+          <span class="detected-time">${event.time}</span>
+          <span class="detected-label">${formatEventText(event)}</span>
+          <span class="detected-meta">${event.label} | ${event.fps} FPS</span>
+        </li>
+      `).join("");
+    }
+
+    async function refreshDetectionLog() {
+      try {
+        const response = await fetch("/detections.json", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Request failed: ${response.status}`);
+        }
+        const events = await response.json();
+        renderDetectionLog(events);
+      } catch (error) {
+        logElement.innerHTML = '<li class="empty-log">Detection log unavailable.</li>';
+      }
+    }
+
+    refreshDetectionLog();
+    setInterval(refreshDetectionLog, 1000);
+  </script>
 </body>
 </html>
 """
@@ -231,6 +381,12 @@ def stream_edges():
         generate_stream("edges"),
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@app.route("/detections.json")
+def detections_json():
+    """Serve recent detection events for the dashboard log."""
+    return jsonify(pipeline.get_detection_log())
 
 
 def _handle_shutdown(signum, _frame):
