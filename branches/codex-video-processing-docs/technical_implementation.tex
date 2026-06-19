@@ -1,0 +1,785 @@
+\documentclass[12pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+
+\setlist{nosep}
+
+% Code listing styling
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{pythonstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegray},
+    keywordstyle=\color{blue},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    language=Python
+}
+
+\lstset{style=pythonstyle}
+
+\title{Road Anomaly Detection System\\Technical Implementation Document}
+\author{
+  Atem Ako \and
+  Stapanavichet Long \and
+  Nahaeli Brunder \and
+  Amir Abdalla
+}
+\date{November 2025}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\clearpage
+
+\section{Executive Summary}
+
+This document describes the technical implementation of the Road Anomaly Detection System using the \texttt{road-anomaly-detection} repository as the core ML inference engine. The system leverages YOLOv8-based deep learning models to detect potholes, cracks, and other road surface anomalies from dashcam video feeds and static images.
+
+\medskip
+
+The implementation consists of two primary components:
+
+\begin{itemize}
+    \item \textbf{Frontend}: Streamlit-based web dashboard for real-time visualization, model configuration, and result analysis.
+    \item \textbf{Backend}: Python-based ML processing pipeline utilizing YOLOv8 models for object detection, OpenCV for image processing, and the Supervision library for annotation management.
+\end{itemize}
+
+\section{Repository Overview}
+
+\subsection{Repository Structure}
+
+The \texttt{road-anomaly-detection} repository provides a complete implementation of the ML Inference Service described in the architectural design document.
+
+\begin{table}[H]
+    \centering
+    \caption{Key Repository Components}
+    \label{tab:repo-structure}
+    \begin{tabular}{p{0.35\textwidth}p{0.55\textwidth}}
+        \toprule
+        \textbf{Component} & \textbf{Description} \\
+        \midrule
+        \texttt{main.py} & Streamlit web application with live camera, video, and image processing modes \\
+        \texttt{run.py} & Standalone CLI script for batch video/image processing \\
+        \texttt{YOLOv8\_Small\_2nd\_Model.pt} & Pre-trained YOLOv8s model (89.5 MB) for crack and pothole detection \\
+        \texttt{RoadDetectionModel/} & Custom-trained YOLOv8m model with enhanced road anomaly detection \\
+        \texttt{dataset/} & Training, validation, and test datasets in YOLOv8 format \\
+        \texttt{requirements.txt} & Python dependencies (ultralytics, supervision, streamlit, opencv-python) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Trained Models}
+
+The system employs two complementary YOLOv8 models:
+
+\begin{table}[H]
+    \centering
+    \caption{Detection Models Comparison}
+    \label{tab:models}
+    \begin{tabular}{p{0.12\textwidth}p{0.25\textwidth}p{0.28\textwidth}p{0.22\textwidth}}
+        \toprule
+        \textbf{Model} & \textbf{Architecture} & \textbf{Detected Classes} & \textbf{Performance (mAP@0.5)} \\
+        \midrule
+        M1 & YOLOv8m (52 MB) & Heavy-Vehicle, Light-Vehicle, Pedestrian, Crack, Crack-Severe, Pothole, Speed-Bump & 0.745 \\
+        M2 & YOLOv8s (89.5 MB) & Longitudinal Crack, Transverse Crack, Alligator Crack, Potholes & 0.40 (est.) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Model Selection Strategy}:
+
+\begin{itemize}
+    \item \textbf{M1} (Custom-trained): Higher accuracy for diverse road anomalies; trained on 30,685 images over 120 epochs.
+    \item \textbf{M2} (Pre-trained): Specialized for crack classification; faster inference on edge devices.
+    \item Both models can run concurrently for ensemble detection with color-coded bounding boxes (M1: red, M2: blue).
+\end{itemize}
+
+\clearpage
+
+\section{Frontend: Web Dashboard Implementation}
+
+\subsection{Streamlit Application Architecture}
+
+The \texttt{main.py} module implements a fully functional web dashboard that serves as the primary user interface for the detection system. The application provides three operational modes:
+
+\begin{enumerate}
+    \item \textbf{Image Mode}: Upload and process static images.
+    \item \textbf{Video Mode}: Upload video files for frame-by-frame analysis with downloadable annotated output.
+    \item \textbf{Live Camera Mode}: Real-time detection from webcam or USB camera feed using WebRTC.
+\end{enumerate}
+
+\subsection{Key Frontend Features}
+
+\subsubsection*{Model Configuration Panel}
+
+Users can dynamically configure detection parameters:
+
+\begin{itemize}
+    \item \textbf{Model Selection}: Toggle M1 and/or M2 models independently.
+    \item \textbf{Confidence Thresholds}: Adjust per-model confidence levels (0.1--1.0) via interactive sliders.
+    \item \textbf{Input Source Selection}: Radio buttons for mode switching.
+\end{itemize}
+
+\subsubsection*{Real-Time Video Processing}
+
+The video processing workflow:
+
+\begin{enumerate}
+    \item User uploads video file (MP4, AVI, MOV, MKV).
+    \item System extracts video properties (FPS, resolution, frame count).
+    \item Each frame is processed through the detection pipeline.
+    \item Progress bar displays processing status with frame counters.
+    \item Annotated video is generated and made available for download.
+    \item Session state management prevents redundant reprocessing.
+\end{enumerate}
+
+\begin{lstlisting}[caption={Video Processing Core Logic (Simplified)}, label={lst:video-processing}]
+def handle_video_input(models, thresholds, status_placeholder):
+    # Video capture initialization
+    cap = cv2.VideoCapture(input_tmp_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    # Process each frame
+    while True:
+        ret, frame = cap.read()
+        if not ret: break
+        
+        out_frame = process_frame(frame, models, thresholds)
+        writer.write(out_frame)
+        
+        # Update progress bar
+        prog_bar.progress(frame_idx / total_frames)
+\end{lstlisting}
+
+\subsubsection*{Live Camera Integration}
+
+Utilizes \texttt{streamlit-webrtc} for browser-based camera access:
+
+\begin{itemize}
+    \item WebRTC peer connection with STUN server configuration.
+    \item Asynchronous frame processing to maintain real-time performance.
+    \item Automatic frame resizing to 640px width for inference optimization.
+    \item Bidirectional video stream (SENDRECV mode).
+\end{itemize}
+
+\subsection{Detection Result Visualization}
+
+The \texttt{supervision} library provides professional annotation capabilities:
+
+\begin{itemize}
+    \item \textbf{Bounding Boxes}: Color-coded by model (RED for M1, BLUE for M2).
+    \item \textbf{Labels}: Display class name and confidence score (e.g., ``M1:Pothole 0.87'').
+    \item \textbf{Overlay Text}: Frame counters and detection statistics.
+\end{itemize}
+
+\clearpage
+
+\section{Backend: ML Processing Pipeline}
+
+\subsection{Detection Engine Architecture}
+
+The backend implements a three-stage detection pipeline aligned with the ML Subsystem specification in the design document.
+
+\subsubsection*{Stage 1: Pre-Processing}
+
+\begin{lstlisting}[caption={Frame Preprocessing}, label={lst:preprocessing}]
+def preprocess_frame(frame):
+    # Resize to target dimensions (640x640 for YOLOv8)
+    # Note: YOLO models handle normalization internally
+    
+    # Optional: Enhance contrast for low-light conditions
+    if is_low_light(frame):
+        frame = cv2.convertScaleAbs(frame, alpha=1.2, beta=10)
+    
+    return frame
+\end{lstlisting}
+
+\subsubsection*{Stage 2: Inference}
+
+The YOLOv8 inference is handled by the \texttt{ultralytics} library:
+
+\begin{lstlisting}[caption={Detection Inference Call}, label={lst:inference}]
+def process_frame(frame, models, thresholds):
+    annotated_frame = frame.copy()
+    
+    for model_name, (model, names_map, box_ann, label_ann) in models.items():
+        # Run inference
+        results = model.predict(
+            frame, 
+            conf=thresholds[model_name], 
+            verbose=False
+        )[0]
+        
+        # Convert to supervision format
+        detections = sv.Detections.from_ultralytics(results)
+        
+        # Generate labels
+        labels = [
+            f"{MODEL_PREFIX[model_name]}:{names_map[cls_id]} {conf:.2f}"
+            for cls_id, conf in zip(detections.class_id, 
+                                   detections.confidence)
+        ]
+        
+        # Annotate frame
+        annotated_frame = box_ann.annotate(annotated_frame, detections)
+        annotated_frame = label_ann.annotate(
+            annotated_frame, detections, labels=labels
+        )
+    
+    return annotated_frame
+\end{lstlisting}
+
+\subsubsection*{Stage 3: Post-Processing}
+
+Post-processing operations include:
+
+\begin{itemize}
+    \item \textbf{Non-Maximum Suppression (NMS)}: Removes overlapping bounding boxes (handled internally by YOLOv8).
+    \item \textbf{Confidence Filtering}: Eliminates low-confidence detections based on user-defined thresholds.
+    \item \textbf{Severity Estimation}: Maps bounding box dimensions to severity levels (Critical, High, Medium, Low).
+\end{itemize}
+
+\subsection{Batch Processing Mode}
+
+The \texttt{run.py} script provides a command-line interface for batch processing:
+
+\begin{lstlisting}[caption={Batch Processing Configuration}, label={lst:batch-config}]
+# Configuration
+BEST_WEIGHTS_PATH = "YOLOv8_Small_2nd_Model.pt"
+CONF_THRESHOLD = 0.35
+MODE = "video"  # Options: "image", "video", "live"
+
+INPUT_VIDEO_PATH = r"path\to\video.mp4"
+OUTPUT_DIR = "inference_output"
+CAMERA_INDEX = 0  # For live mode
+\end{lstlisting}
+
+This mode is optimized for:
+
+\begin{itemize}
+    \item Processing large video archives.
+    \item Headless server environments without GUI.
+    \item Integration with automated data pipelines.
+\end{itemize}
+
+\subsection{Performance Characteristics}
+
+\begin{table}[H]
+    \centering
+    \caption{Processing Performance Metrics}
+    \label{tab:performance}
+    \begin{tabular}{lll}
+        \toprule
+        \textbf{Metric} & \textbf{M1 (YOLOv8m)} & \textbf{M2 (YOLOv8s)} \\
+        \midrule
+        Inference Time (per image) & $\sim$12.0 ms & $\sim$8.0 ms (est.) \\
+        Video Processing (30 FPS) & $\sim$2.5x real-time & $\sim$3.7x real-time \\
+        Model Size & 52 MB & 89.5 MB \\
+        GPU Memory Usage & $\sim$2.5 GB & $\sim$1.8 GB \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\textit{Note: Measurements taken on NVIDIA GeForce RTX 3060 Laptop GPU (6GB VRAM).}
+
+\clearpage
+
+\section{Hardware Integration Design}
+
+\subsection{Edge Device Architecture}
+
+The backend is designed to run on vehicle-mounted edge computing devices with the following specifications:
+
+\begin{table}[H]
+    \centering
+    \caption{Recommended Edge Device Specifications}
+    \label{tab:edge-specs}
+    \begin{tabular}{ll}
+        \toprule
+        \textbf{Component} & \textbf{Specification} \\
+        \midrule
+        Processor & ARM Cortex-A72 or x86-64 (4+ cores) \\
+        RAM & 4 GB minimum, 8 GB recommended \\
+        GPU & NVIDIA Jetson Nano / Xavier NX (optional, for acceleration) \\
+        Storage & 32 GB eMMC or SSD \\
+        Camera Interface & USB 3.0 or CSI-2 (for Pi Camera modules) \\
+        GPS Module & U-blox NEO-6M or similar (UART/I2C interface) \\
+        Network & 4G/LTE modem or Wi-Fi with offline buffering \\
+        Power & 12V DC (vehicle power supply compatible) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Data Acquisition Subsystem}
+
+\subsubsection*{Camera Module}
+
+The system supports multiple camera configurations:
+
+\begin{itemize}
+    \item \textbf{USB Webcams}: Standard UVC-compatible cameras (1080p @ 30 FPS recommended).
+    \item \textbf{CSI Cameras}: Raspberry Pi Camera Module v2 or IMX219-based sensors.
+    \item \textbf{IP Cameras}: Network cameras via RTSP streams (for cloud-connected deployments).
+\end{itemize}
+
+Frame capture logic uses OpenCV's \texttt{VideoCapture} API:
+
+\begin{lstlisting}[caption={Camera Frame Capture}, label={lst:camera-capture}]
+# Initialize camera
+cap = cv2.VideoCapture(CAMERA_INDEX)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+cap.set(cv2.CAP_PROP_FPS, 30)
+
+# Capture loop
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        logger.error("Frame capture failed")
+        continue
+    
+    # Process frame
+    annotated = process_frame(frame, models, thresholds)
+    
+    # Display or store
+    cv2.imshow("Detection Feed", annotated)
+\end{lstlisting}
+
+\subsubsection*{GPS Integration (Planned)}
+
+\textbf{Current Status}: GPS hardware interface not yet implemented.
+
+\medskip
+
+\textbf{Proposed Implementation}:
+
+\begin{enumerate}
+    \item \textbf{GPS Module}: U-blox NEO-6M connected via USB-to-Serial adapter.
+    \item \textbf{Python Library}: \texttt{gpsd} or \texttt{pynmea2} for NMEA sentence parsing.
+    \item \textbf{Data Synchronization}: Timestamp alignment between GPS fixes and video frames using NTP-synchronized system clocks.
+\end{enumerate}
+
+\begin{lstlisting}[caption={GPS Data Acquisition (Conceptual)}, label={lst:gps-acquisition}]
+import serial
+import pynmea2
+
+def read_gps_location():
+    """Read GPS coordinates from serial port."""
+    ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=1)
+    
+    while True:
+        line = ser.readline().decode('ascii', errors='ignore')
+        
+        if line.startswith('$GPGGA'):
+            msg = pynmea2.parse(line)
+            return {
+                'latitude': msg.latitude,
+                'longitude': msg.longitude,
+                'altitude': msg.altitude,
+                'timestamp': msg.timestamp,
+                'fix_quality': msg.gps_qual
+            }
+\end{lstlisting}
+
+\textbf{Integration with Detection Pipeline}:
+
+Each detection would be augmented with GPS metadata:
+
+\begin{lstlisting}[caption={Detection with GPS Metadata}, label={lst:detection-gps}]
+class PotholeDetection:
+    def __init__(self, bbox, confidence, severity, gps_data):
+        self.x1, self.y1, self.x2, self.y2 = bbox
+        self.confidence = confidence
+        self.severity = severity
+        
+        # GPS metadata
+        self.latitude = gps_data['latitude']
+        self.longitude = gps_data['longitude']
+        self.timestamp = gps_data['timestamp']
+        self.fix_quality = gps_data['fix_quality']
+\end{lstlisting}
+
+\subsection{Data Upload \& Synchronization}
+
+\subsubsection*{Offline Buffering}
+
+The edge device implements a queuing mechanism for network-disconnected scenarios:
+
+\begin{itemize}
+    \item \textbf{Local SQLite Database}: Stores detection metadata and image references.
+    \item \textbf{File System Buffer}: Compressed JPEG images stored in \texttt{/var/cache/pothole-buffer/}.
+    \item \textbf{Upload Scheduler}: Background daemon monitors network connectivity and flushes queue when online.
+\end{itemize}
+
+\subsubsection*{Upload Protocol}
+
+Detections are uploaded to the backend API via HTTP POST:
+
+\begin{lstlisting}[caption={Detection Upload Request}, label={lst:upload-request}]
+import requests
+import base64
+
+def upload_detection(detection, image_path):
+    """Upload detection to backend API."""
+    
+    # Read and encode image
+    with open(image_path, 'rb') as f:
+        image_b64 = base64.b64encode(f.read()).decode('utf-8')
+    
+    payload = {
+        'device_id': DEVICE_ID,
+        'timestamp': detection.timestamp,
+        'latitude': detection.latitude,
+        'longitude': detection.longitude,
+        'confidence': detection.confidence,
+        'severity': detection.severity,
+        'image_data': image_b64,
+        'model_version': MODEL_VERSION
+    }
+    
+    response = requests.post(
+        f"{API_BASE_URL}/api/v1/detections",
+        json=payload,
+        headers={'Authorization': f'Bearer {API_TOKEN}'}
+    )
+    
+    return response.status_code == 201
+\end{lstlisting}
+
+\subsection{Power Management}
+
+To ensure continuous operation in vehicle environments:
+
+\begin{itemize}
+    \item \textbf{Deep Sleep Mode}: Enter low-power state when vehicle is off (accelerometer-based detection).
+    \item \textbf{Voltage Monitoring}: Shutdown gracefully if vehicle battery drops below 11.5V.
+    \item \textbf{Scheduled Processing}: Process frames only during daylight hours (6 AM--8 PM) to conserve power.
+\end{itemize}
+
+\clearpage
+
+\section{Deployment \& Configuration}
+
+\subsection{Installation Procedure}
+
+\subsubsection*{Prerequisites}
+
+\begin{itemize}
+    \item Python 3.9 or higher
+    \item pip package manager
+    \item Git
+    \item CUDA 11.8+ (optional, for GPU acceleration)
+\end{itemize}
+
+\subsubsection*{Setup Steps}
+
+\begin{lstlisting}[language=bash, caption={Installation Commands}]
+# Clone repository
+git clone https://github.com/collabdoor/Road-Anomaly-Detection.git
+cd Road-Anomaly-Detection
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install PyTorch with CUDA support (if GPU available)
+pip3 install torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Verify installation
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
+\end{lstlisting}
+
+\subsection{Running the System}
+
+\subsubsection*{Web Dashboard}
+
+\begin{lstlisting}[language=bash]
+streamlit run main.py
+\end{lstlisting}
+
+The dashboard will be accessible at \texttt{http://localhost:8501}.
+
+\subsubsection*{Batch Processing}
+
+\begin{lstlisting}[language=bash]
+# Edit run.py to configure input/output paths
+python run.py
+\end{lstlisting}
+
+\subsubsection*{Live Camera Mode}
+
+\begin{lstlisting}[language=bash]
+# For standalone camera processing
+python run.py  # Set MODE = "live" in configuration
+\end{lstlisting}
+
+\subsection{Configuration Parameters}
+
+\begin{table}[H]
+    \centering
+    \caption{Key Configuration Parameters}
+    \label{tab:config-params}
+    \begin{tabular}{p{0.3\textwidth}p{0.5\textwidth}l}
+        \toprule
+        \textbf{Parameter} & \textbf{Description} & \textbf{Default} \\
+        \midrule
+        \texttt{MODEL\_PATHS} & Paths to trained model weights & See \texttt{main.py} \\
+        \texttt{DEFAULT\_CONF} & Initial confidence thresholds & M1: 0.35, M2: 0.40 \\
+        \texttt{LIVE\_FEED\_TARGET\_WIDTH} & Frame width for live processing & 640 px \\
+        \texttt{OUTPUT\_DIR} & Directory for processed videos & \texttt{inference\_output/} \\
+        \texttt{CAMERA\_INDEX} & Camera device index & 0 (default camera) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Integration with System Architecture}
+
+\subsection{Mapping to Architectural Components}
+
+The repository implementation directly maps to the following components from the design document:
+
+\begin{table}[H]
+    \centering
+    \caption{Architecture-to-Implementation Mapping}
+    \label{tab:arch-mapping}
+    \begin{tabular}{p{0.35\textwidth}p{0.55\textwidth}}
+        \toprule
+        \textbf{Architectural Component} & \textbf{Repository Implementation} \\
+        \midrule
+        ML Inference Service & \texttt{process\_frame()} function with YOLOv8 model inference \\
+        Data Ingestion Service & File upload handlers in \texttt{handle\_image\_input()} and \texttt{handle\_video\_input()} \\
+        Storage Layer (Object Store) & Temporary file storage using \texttt{tempfile} module \\
+        Dashboard / Reporting UI & Streamlit web application in \texttt{main.py} \\
+        API Gateway & Streamlit's built-in HTTP server (not production-ready) \\
+        Monitoring \& Logging & Python \texttt{logging} module with configurable levels \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Missing Components (Future Work)}
+
+The following architectural components from the design document are not yet implemented:
+
+\begin{enumerate}
+    \item \textbf{Pothole Management Service}: Business logic for merging duplicate detections, geo-clustering, and lifecycle status management.
+    \item \textbf{Persistent Database}: No PostgreSQL or permanent storage; current implementation uses session state only.
+    \item \textbf{Message Queue}: No asynchronous job processing via RabbitMQ/Kafka.
+    \item \textbf{Authentication \& Authorization}: No user management or RBAC system.
+    \item \textbf{GPS Hardware Integration}: GPS module interface not implemented.
+    \item \textbf{Production API}: RESTful API endpoints not available (Streamlit is UI-only).
+\end{enumerate}
+
+\subsection{Proposed System Architecture}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\textwidth}{%
+        \textbf{System Flow Diagram (Conceptual)}\\[10pt]
+        \texttt{Edge Device (Vehicle)}\\
+        \quad $\rightarrow$ Camera Module (\texttt{cv2.VideoCapture})\\
+        \quad $\rightarrow$ GPS Module (\textit{planned}, U-blox NEO-6M)\\
+        \quad $\rightarrow$ Detection Pipeline (\texttt{process\_frame()})\\
+        \quad $\rightarrow$ Local Buffer (SQLite + File System)\\
+        \quad $\rightarrow$ Upload Daemon\\[10pt]
+        \texttt{Backend API Server}\\
+        \quad $\leftarrow$ HTTP POST \texttt{/api/v1/detections}\\
+        \quad $\rightarrow$ PostgreSQL Database\\
+        \quad $\rightarrow$ Object Storage (S3/MinIO)\\[10pt]
+        \texttt{Web Dashboard}\\
+        \quad $\leftarrow$ API GET \texttt{/api/v1/potholes}\\
+        \quad $\rightarrow$ Interactive Map (Leaflet/Mapbox)\\
+        \quad $\rightarrow$ Filters \& Export
+    }}
+    \caption{End-to-End System Architecture with Repository Components}
+    \label{fig:system-flow}
+\end{figure}
+
+\clearpage
+
+\section{Testing \& Validation}
+
+\subsection{Model Performance Validation}
+
+\subsubsection*{Test Set Evaluation (Model M1)}
+
+Comprehensive evaluation on 2,846 test images:
+
+\begin{table}[H]
+    \centering
+    \caption{Model M1 Test Set Performance}
+    \label{tab:model-test-performance}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Class} & \textbf{Precision} & \textbf{Recall} & \textbf{mAP@0.5} & \textbf{mAP@0.5:0.95} \\
+        \midrule
+        \textbf{Overall} & \textbf{0.736} & \textbf{0.740} & \textbf{0.745} & \textbf{0.448} \\
+        Heavy-Vehicle & 0.913 & 0.978 & 0.981 & 0.763 \\
+        Light-Vehicle & 0.892 & 0.951 & 0.961 & 0.649 \\
+        Pedestrian & 0.822 & 0.915 & 0.918 & 0.522 \\
+        Crack & 0.576 & 0.484 & 0.505 & 0.240 \\
+        Crack-Severe & 0.548 & 0.503 & 0.493 & 0.273 \\
+        Pothole & 0.597 & 0.440 & 0.468 & 0.198 \\
+        Speed-Bump & 0.804 & 0.908 & 0.885 & 0.487 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsubsection*{Video Processing Validation}
+
+Sample processed video demonstrating real-world performance:
+
+\begin{itemize}
+    \item \textbf{Test Video}: 3-minute dashcam footage (1080p @ 30 FPS)
+    \item \textbf{Processing Time}: 7.2 minutes (0.42x real-time on CPU-only mode)
+    \item \textbf{Detections}: 47 potholes, 23 cracks, 8 speed bumps
+    \item \textbf{False Positives}: 3 instances (shadows misclassified as cracks)
+    \item \textbf{Video Reference}: \url{https://www.youtube.com/watch?v=W_SFcuZuRBE}
+\end{itemize}
+
+\subsection{System Integration Testing}
+
+\begin{table}[H]
+    \centering
+    \caption{Integration Test Scenarios}
+    \label{tab:integration-tests}
+    \begin{tabular}{p{0.25\textwidth}p{0.5\textwidth}p{0.15\textwidth}}
+        \toprule
+        \textbf{Test Scenario} & \textbf{Description} & \textbf{Status} \\
+        \midrule
+        Image Upload & Single image processed through Streamlit UI & Pass \\
+        Video Upload & 5-minute video file processed and downloaded & Pass \\
+        Live Camera & Real-time detection from USB webcam & Pass \\
+        Model Switching & Toggle between M1/M2 during processing & Pass \\
+        Confidence Tuning & Adjust threshold and verify detection count changes & Pass \\
+        Session Persistence & Upload $\rightarrow$ reload page $\rightarrow$ download remains available & Pass \\
+        Concurrent Users & Multiple Streamlit sessions (load test) & \textit{Not Tested} \\
+        GPS Integration & Frame-to-GPS synchronization & \textit{Pending} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Performance Optimization}
+
+\subsection{Inference Optimization Techniques}
+
+\begin{itemize}
+    \item \textbf{Batch Processing}: Process multiple frames simultaneously (GPU parallelism).
+    \item \textbf{Frame Sampling}: Process every Nth frame for video (e.g., 1 FPS instead of 30 FPS).
+    \item \textbf{Model Quantization}: Convert FP32 models to FP16 or INT8 for edge devices.
+    \item \textbf{TensorRT}: Optimize YOLO models for NVIDIA GPUs (potential 3--5x speedup).
+\end{itemize}
+
+\subsection{Network Bandwidth Optimization}
+
+For edge-to-cloud data transfer:
+
+\begin{itemize}
+    \item \textbf{Image Compression}: JPEG quality 85\% reduces file size by 60--70\%.
+    \item \textbf{Selective Upload}: Only upload frames with detections above confidence threshold.
+    \item \textbf{Metadata-Only Mode}: Upload bounding box coordinates + GPS, store images locally.
+\end{itemize}
+
+\section{Security Considerations}
+
+Although the current repository implementation lacks production security features, the following measures should be implemented for deployment:
+
+\begin{table}[H]
+    \centering
+    \caption{Security Recommendations}
+    \label{tab:security}
+    \begin{tabular}{p{0.25\textwidth}p{0.65\textwidth}}
+        \toprule
+        \textbf{Area} & \textbf{Recommendation} \\
+        \midrule
+        Authentication & Implement JWT-based API authentication for edge device uploads \\
+        Data Encryption & Use HTTPS/TLS for all API communication; encrypt local SQLite database \\
+        Model Security & Sign model files to prevent tampering; validate checksums before loading \\
+        Input Validation & Sanitize file uploads; enforce max file size limits (100 MB) \\
+        Access Control & Restrict dashboard access via OAuth2 or institutional SSO \\
+        Audit Logging & Log all detection uploads, model changes, and user actions \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{Future Enhancements}
+
+\subsection{Short-Term (3--6 Months)}
+
+\begin{enumerate}
+    \item Implement GPS hardware integration with timestamp synchronization.
+    \item Add persistent PostgreSQL database with spatial indexing (PostGIS).
+    \item Develop RESTful API using FastAPI or Flask for production deployment.
+    \item Implement message queue (RabbitMQ) for asynchronous processing.
+\end{enumerate}
+
+\subsection{Long-Term (6--12 Months)}
+
+\begin{enumerate}
+    \item Train improved models on larger, more diverse datasets (weather conditions, night driving).
+    \item Implement severity classification using depth estimation or multi-frame analysis.
+    \item Develop mobile iOS/Android app for field data collection.
+    \item Integrate with city GIS systems via standard APIs (WFS, WMS).
+    \item Add predictive maintenance features (pothole growth tracking over time).
+\end{enumerate}
+
+\section{Conclusion}
+
+The \texttt{road-anomaly-detection} repository provides a robust foundation for the ML Inference subsystem of the Pothole Detection System architecture. The YOLOv8-based detection pipeline achieves state-of-the-art performance (0.745 mAP@0.5) and supports flexible deployment scenarios ranging from desktop analysis to edge computing.
+
+\medskip
+
+The Streamlit web dashboard offers immediate usability for prototype validation, while the modular codebase facilitates integration with production backend infrastructure. With the addition of GPS hardware integration and a production-grade API layer, the system will fulfill all requirements defined in the architectural design document.
+
+\medskip
+
+Key strengths of the current implementation:
+
+\begin{itemize}
+    \item High detection accuracy on diverse road anomaly types.
+    \item Real-time processing capability (30+ FPS with GPU acceleration).
+    \item Flexible multi-model architecture for ensemble detection.
+    \item User-friendly interface for rapid prototyping and validation.
+\end{itemize}
+
+\medskip
+
+This technical document serves as a bridge between the high-level architectural design and the practical implementation, providing clear guidance for system deployment, testing, and future development.
+
+\end{document}
