@@ -177,59 +177,48 @@ def index():
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0f172a;
-      --panel: #111827;
-      --border: #334155;
-      --text: #e5e7eb;
+      --bg: #111827;
+      --panel: #1f2937;
+      --border: #374151;
+      --text: #f9fafb;
+      --muted: #d1d5db;
       --accent: #22c55e;
     }
     body {
       margin: 0;
       font-family: "Segoe UI", sans-serif;
-      background: radial-gradient(circle at top, #1e293b, var(--bg));
+      background: var(--bg);
       color: var(--text);
     }
     main {
-      max-width: 1200px;
+      max-width: 960px;
       margin: 0 auto;
       padding: 24px;
     }
     h1 {
+      font-size: 28px;
+      line-height: 1.2;
       margin-bottom: 8px;
     }
-    p {
-      color: #cbd5e1;
+    h2 {
+      font-size: 20px;
+      margin: 0 0 12px;
     }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 20px;
-      margin-top: 24px;
+    p {
+      color: var(--muted);
     }
     .panel {
-      background: rgba(17, 24, 39, 0.9);
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: 6px;
       padding: 16px;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+      margin-top: 20px;
     }
     img {
       width: 100%;
-      border-radius: 12px;
+      border-radius: 4px;
       display: block;
       background: black;
-    }
-    .tag {
-      display: inline-block;
-      margin-top: 8px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(34, 197, 94, 0.12);
-      color: #86efac;
-      font-size: 14px;
-    }
-    .log-panel {
-      margin-top: 20px;
     }
     .log-header {
       align-items: center;
@@ -241,53 +230,57 @@ def index():
       margin: 0;
     }
     .log-count {
-      color: #86efac;
+      color: var(--accent);
       font-size: 14px;
       white-space: nowrap;
     }
-    .detection-log {
+    .table-wrap {
       border: 1px solid var(--border);
-      border-radius: 12px;
-      list-style: none;
-      margin: 16px 0 0;
+      border-radius: 4px;
+      margin-top: 12px;
       max-height: 280px;
       overflow-y: auto;
-      padding: 0;
     }
-    .detection-log li {
-      align-items: center;
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th,
+    td {
       border-bottom: 1px solid var(--border);
-      display: grid;
-      gap: 12px;
-      grid-template-columns: 90px 1fr auto;
       padding: 12px 14px;
+      text-align: left;
     }
-    .detection-log li:last-child {
+    th {
+      background: #111827;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      position: sticky;
+      top: 0;
+    }
+    tr:last-child td {
       border-bottom: 0;
     }
-    .detected-time {
-      color: #94a3b8;
-      font-variant-numeric: tabular-nums;
-    }
-    .detected-label {
+    td {
       color: var(--text);
-      font-weight: 600;
+      font-size: 15px;
     }
-    .detected-meta {
-      color: #cbd5e1;
-      font-size: 14px;
+    .numeric {
+      font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
-    .empty-log {
-      color: #94a3b8;
-      padding: 18px;
+    .empty-row {
+      color: #9ca3af;
+      text-align: center;
     }
     @media (max-width: 640px) {
-      .detection-log li {
-        grid-template-columns: 1fr;
+      main {
+        padding: 16px;
       }
-      .detected-meta {
-        white-space: normal;
+      th,
+      td {
+        padding: 10px;
       }
     }
   </style>
@@ -295,52 +288,58 @@ def index():
 <body>
   <main>
     <h1>Pi Vision Pipeline</h1>
-    <p>The Raspberry Pi detects dark circular markers on light paper and overlays a live object count in real time.</p>
-    <div class="grid">
-      <section class="panel">
-        <h2>Camera Feed</h2>
-        <img src="/stream/original.mjpg" alt="Processed camera feed">
-        <div class="tag">Live camera stream with FPS and circle count</div>
-      </section>
-      <section class="panel">
-        <h2>Detections</h2>
-        <img src="/stream/edges.mjpg" alt="Canny edge stream">
-        <div class="tag">Dark circular blobs outlined and counted</div>
-      </section>
-    </div>
-    <section class="panel log-panel">
+    <p>Live detection feed and reported object history.</p>
+    <section class="panel">
+      <h2>Detection Feed</h2>
+      <img src="/stream/edges.mjpg" alt="Live detection feed">
+    </section>
+    <section class="panel">
       <div class="log-header">
-        <h2>Detection Log</h2>
+        <h2>Reported Detections</h2>
         <span class="log-count" id="log-count">0 events</span>
       </div>
-      <ul class="detection-log" id="detection-log">
-        <li class="empty-log">Waiting for detected objects...</li>
-      </ul>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Detected Item</th>
+              <th>Count</th>
+              <th>FPS</th>
+            </tr>
+          </thead>
+          <tbody id="detection-log">
+            <tr>
+              <td class="empty-row" colspan="4">Waiting for detected objects...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
   </main>
   <script>
     const logElement = document.getElementById("detection-log");
     const logCountElement = document.getElementById("log-count");
 
-    function formatEventText(event) {
-      const objectText = event.count === 1 ? "object" : "objects";
-      return `${event.count} ${objectText} detected`;
+    function formatDetectedItem(event) {
+      return event.count === 1 ? event.label : `${event.label}s`;
     }
 
     function renderDetectionLog(events) {
       logCountElement.textContent = `${events.length} ${events.length === 1 ? "event" : "events"}`;
 
       if (!events.length) {
-        logElement.innerHTML = '<li class="empty-log">Waiting for detected objects...</li>';
+        logElement.innerHTML = '<tr><td class="empty-row" colspan="4">Waiting for detected objects...</td></tr>';
         return;
       }
 
       logElement.innerHTML = events.map((event) => `
-        <li>
-          <span class="detected-time">${event.time}</span>
-          <span class="detected-label">${formatEventText(event)}</span>
-          <span class="detected-meta">${event.label} | ${event.fps} FPS</span>
-        </li>
+        <tr>
+          <td class="numeric">${event.time}</td>
+          <td>${formatDetectedItem(event)}</td>
+          <td class="numeric">${event.count}</td>
+          <td class="numeric">${event.fps}</td>
+        </tr>
       `).join("");
     }
 
@@ -353,7 +352,7 @@ def index():
         const events = await response.json();
         renderDetectionLog(events);
       } catch (error) {
-        logElement.innerHTML = '<li class="empty-log">Detection log unavailable.</li>';
+        logElement.innerHTML = '<tr><td class="empty-row" colspan="4">Detection log unavailable.</td></tr>';
       }
     }
 
