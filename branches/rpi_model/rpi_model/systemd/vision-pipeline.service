@@ -1,0 +1,17 @@
+# Sample systemd unit for the Raspberry Pi vision pipeline.
+# Adjust the username, WorkingDirectory, and ExecStart path for your system.
+
+[Unit]
+Description=Raspberry Pi Vision Pipeline
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pi-vision-pipeline
+ExecStart=/usr/bin/python3 /home/pi/pi-vision-pipeline/main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
