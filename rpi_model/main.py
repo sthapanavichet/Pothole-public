@@ -22,7 +22,7 @@ from config import (
     STREAM_HOST,
     STREAM_PORT,
 )
-from processing import draw_status, process_frame
+from processing import process_frame
 from utils import calculate_fps, ensure_output_dir
 
 app = Flask(__name__)
@@ -77,11 +77,9 @@ class VisionPipelineServer:
                 frame_bgr, detection_view, edges, count = process_frame(frame_rgb)
 
                 fps, self.prev_time = calculate_fps(self.prev_time)
-                display_frame = draw_status(frame_bgr.copy(), fps, count)
-                detection_display = draw_status(detection_view, fps, count)
 
-                original_jpeg = self._encode_jpeg(display_frame)
-                edges_jpeg = self._encode_jpeg(detection_display)
+                original_jpeg = self._encode_jpeg(frame_bgr)
+                edges_jpeg = self._encode_jpeg(detection_view)
 
                 with self.lock:
                     self.latest_original_jpeg = original_jpeg
@@ -91,7 +89,7 @@ class VisionPipelineServer:
                 self.frame_ready.set()
 
                 if SAVE_OUTPUT and self.frame_index % SAVE_INTERVAL == 0:
-                    save_output_frame(OUTPUT_DIR, self.frame_index, detection_display)
+                    save_output_frame(OUTPUT_DIR, self.frame_index, detection_view)
 
                 self.frame_index += 1
             except Exception as exc:
@@ -175,148 +173,75 @@ def index():
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pi Vision Pipeline</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #111827;
-      --panel: #1f2937;
-      --border: #374151;
-      --text: #f9fafb;
-      --muted: #d1d5db;
-      --accent: #22c55e;
-    }
     body {
-      margin: 0;
-      font-family: "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    main {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 24px;
+      background: white;
+      color: black;
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 20px;
     }
     h1 {
       font-size: 28px;
-      line-height: 1.2;
-      margin-bottom: 8px;
+      margin: 0 0 16px;
     }
     h2 {
       font-size: 20px;
-      margin: 0 0 12px;
-    }
-    p {
-      color: var(--muted);
-    }
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 16px;
-      margin-top: 20px;
+      margin: 24px 0 10px;
     }
     img {
-      width: 100%;
-      border-radius: 4px;
+      border: 1px solid black;
       display: block;
-      background: black;
-    }
-    .log-header {
-      align-items: center;
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-    }
-    .log-header h2 {
-      margin: 0;
+      max-width: 900px;
+      width: 100%;
     }
     .log-count {
-      color: var(--accent);
       font-size: 14px;
-      white-space: nowrap;
-    }
-    .table-wrap {
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      margin-top: 12px;
-      max-height: 280px;
-      overflow-y: auto;
+      margin-bottom: 8px;
     }
     table {
       border-collapse: collapse;
+      max-width: 900px;
       width: 100%;
     }
     th,
     td {
-      border-bottom: 1px solid var(--border);
-      padding: 12px 14px;
+      border: 1px solid black;
+      padding: 6px 8px;
       text-align: left;
     }
     th {
-      background: #111827;
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 600;
-      position: sticky;
-      top: 0;
-    }
-    tr:last-child td {
-      border-bottom: 0;
-    }
-    td {
-      color: var(--text);
-      font-size: 15px;
+      background: #eeeeee;
     }
     .numeric {
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
     .empty-row {
-      color: #9ca3af;
       text-align: center;
-    }
-    @media (max-width: 640px) {
-      main {
-        padding: 16px;
-      }
-      th,
-      td {
-        padding: 10px;
-      }
     }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Pi Vision Pipeline</h1>
-    <p>Live detection feed and reported object history.</p>
-    <section class="panel">
-      <h2>Detection Feed</h2>
-      <img src="/stream/edges.mjpg" alt="Live detection feed">
-    </section>
-    <section class="panel">
-      <div class="log-header">
-        <h2>Reported Detections</h2>
-        <span class="log-count" id="log-count">0 events</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Detected Item</th>
-              <th>Count</th>
-              <th>FPS</th>
-            </tr>
-          </thead>
-          <tbody id="detection-log">
-            <tr>
-              <td class="empty-row" colspan="4">Waiting for detected objects...</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+  <h1>Pi Vision Pipeline</h1>
+
+  <h2>Detection Feed</h2>
+  <img src="/stream/edges.mjpg" alt="Live detection feed">
+
+  <h2>Reported Detections</h2>
+  <div class="log-count" id="log-count">0 events</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Detected Item</th>
+        <th>Count</th>
+      </tr>
+    </thead>
+    <tbody id="detection-log">
+      <tr>
+        <td class="empty-row" colspan="3">Waiting for detected objects...</td>
+      </tr>
+    </tbody>
+  </table>
   <script>
     const logElement = document.getElementById("detection-log");
     const logCountElement = document.getElementById("log-count");
@@ -329,7 +254,7 @@ def index():
       logCountElement.textContent = `${events.length} ${events.length === 1 ? "event" : "events"}`;
 
       if (!events.length) {
-        logElement.innerHTML = '<tr><td class="empty-row" colspan="4">Waiting for detected objects...</td></tr>';
+        logElement.innerHTML = '<tr><td class="empty-row" colspan="3">Waiting for detected objects...</td></tr>';
         return;
       }
 
@@ -338,7 +263,6 @@ def index():
           <td class="numeric">${event.time}</td>
           <td>${formatDetectedItem(event)}</td>
           <td class="numeric">${event.count}</td>
-          <td class="numeric">${event.fps}</td>
         </tr>
       `).join("");
     }
@@ -352,7 +276,7 @@ def index():
         const events = await response.json();
         renderDetectionLog(events);
       } catch (error) {
-        logElement.innerHTML = '<tr><td class="empty-row" colspan="4">Detection log unavailable.</td></tr>';
+        logElement.innerHTML = '<tr><td class="empty-row" colspan="3">Detection log unavailable.</td></tr>';
       }
     }
 
