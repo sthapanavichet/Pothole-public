@@ -133,7 +133,7 @@ class VisionPipelineServer:
                 "time": time.strftime("%H:%M:%S"),
                 "count": count,
                 "fps": round(fps, 2),
-                "label": "paper object",
+                "label": "black circle",
             }
         )
 
