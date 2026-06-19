@@ -247,7 +247,7 @@ def index():
     const logCountElement = document.getElementById("log-count");
 
     function formatDetectedItem(event) {
-      return event.count === 1 ? event.label : `${event.label}s`;
+      return event.label;
     }
 
     function renderDetectionLog(events) {
