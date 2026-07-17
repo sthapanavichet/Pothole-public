@@ -9,6 +9,8 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 import av
 import logging
 
+from pothole_api_client import get_api_url, post_image_report
+
 # --- Configuration ---
 MODEL_PATHS = {
     "M1 (Model 1)": "./RoadDetectionModel/RoadModel_yolov8m.pt_rounds120_b9/weights/best.pt",
@@ -34,6 +36,8 @@ if "output_file_path" not in st.session_state:
     st.session_state.output_file_path = None
 if "output_file_name" not in st.session_state:
     st.session_state.output_file_name = None
+if "last_saved_report_id" not in st.session_state:
+    st.session_state.last_saved_report_id = None
 
 
 @st.cache_resource
@@ -60,10 +64,12 @@ def make_annotators(color: sv.Color):
     return box_annotator, label_annotator
 
 
-def process_frame(
+def analyze_frame(
     frame: np.ndarray, models: dict[str, tuple], thresholds: dict[str, float]
-) -> np.ndarray:
+) -> tuple[np.ndarray, list[dict]]:
     annotated_frame = frame.copy()
+    detections_out: list[dict] = []
+
     for model_name, (model, names_map, box_ann, label_ann) in models.items():
         try:
             results = model.predict(frame, conf=thresholds[model_name], verbose=False)[
@@ -78,6 +84,21 @@ def process_frame(
             annotated_frame = label_ann.annotate(
                 annotated_frame, detections, labels=labels
             )
+
+            if detections.class_id is not None:
+                for class_id, confidence, xyxy in zip(
+                    detections.class_id,
+                    detections.confidence,
+                    detections.xyxy,
+                ):
+                    detections_out.append(
+                        {
+                            "model": MODEL_PREFIX[model_name],
+                            "label": names_map.get(int(class_id), str(class_id)),
+                            "confidence": round(float(confidence), 4),
+                            "bbox": [round(float(v), 2) for v in xyxy],
+                        }
+                    )
         except Exception as e:
             logger.error(f"Error during prediction/annotation for {model_name}: {e}")
             cv2.putText(
@@ -89,6 +110,14 @@ def process_frame(
                 (0, 0, 255),
                 2,
             )
+
+    return annotated_frame, detections_out
+
+
+def process_frame(
+    frame: np.ndarray, models: dict[str, tuple], thresholds: dict[str, float]
+) -> np.ndarray:
+    annotated_frame, _ = analyze_frame(frame, models, thresholds)
     return annotated_frame
 
 
@@ -121,16 +150,41 @@ def handle_image_input(models, thresholds, placeholder):
         "Upload Image", type=["jpg", "jpeg", "png", "bmp", "webp"], key="img_upload"
     )
     if uploaded_file:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        file_bytes = bytes(uploaded_file.getvalue())
+        img = cv2.imdecode(np.frombuffer(file_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             st.error("Could not decode image. Please upload a valid image file.")
             placeholder.empty()
         else:
             with st.spinner("Processing image..."):
-                processed_img = process_frame(img, models, thresholds)
+                processed_img, detections = analyze_frame(img, models, thresholds)
+
             placeholder.image(processed_img, channels="BGR", use_container_width=True)
-            st.success("Image processing complete.")
+            st.success(
+                f"Image processing complete. Found {len(detections)} detection(s)."
+            )
+
+            if st.session_state.get("save_to_api", True):
+                with st.spinner("Saving results to cloud API..."):
+                    try:
+                        result = post_image_report(
+                            original_filename=uploaded_file.name,
+                            original_bytes=file_bytes,
+                            annotated_bgr=processed_img,
+                            detections=detections,
+                            api_url=st.session_state.get("api_url") or get_api_url(),
+                        )
+                        report = result.get("report", {})
+                        st.session_state.last_saved_report_id = report.get("id")
+                        st.success(
+                            f"Saved to backend API. Report ID: `{report.get('id', 'unknown')}`"
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to save report to API", exc_info=exc)
+                        st.warning(
+                            "Detection finished, but saving to the cloud API failed. "
+                            f"Details: {exc}"
+                        )
     else:
         placeholder.info("Upload an image using the sidebar to start.")
 
@@ -465,6 +519,18 @@ def main():
     if model_load_failed:
         st.error("One or more models failed to load. Check logs and file paths.")
         st.stop()
+
+    st.sidebar.subheader("☁️ Cloud API")
+    st.session_state.save_to_api = st.sidebar.checkbox(
+        "Save image results to backend API",
+        value=st.session_state.get("save_to_api", True),
+        key="save_to_api_checkbox",
+    )
+    st.session_state.api_url = st.sidebar.text_input(
+        "Backend API URL",
+        value=st.session_state.get("api_url", get_api_url()),
+        key="api_url_input",
+    )
 
     st.sidebar.subheader("🎬 Input Source")
     input_mode = st.sidebar.radio(
