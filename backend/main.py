@@ -9,6 +9,8 @@ from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
 import av
 import logging
 
+from pothole_api_client import get_api_url, get_write_key, post_image_report
+
 # --- Configuration ---
 MODEL_PATHS = {
     "M1 (Model 1)": "./RoadDetectionModel/RoadModel_yolov8m.pt_rounds120_b9/weights/best.pt",
@@ -34,6 +36,13 @@ if "output_file_path" not in st.session_state:
     st.session_state.output_file_path = None
 if "output_file_name" not in st.session_state:
     st.session_state.output_file_name = None
+if "last_saved_report_id" not in st.session_state:
+    st.session_state.last_saved_report_id = None
+# Tracks the last uploaded file we already sent to the API so Streamlit reruns
+# (which re-execute the whole script on every widget interaction) do not create
+# duplicate pothole records for the same upload.
+if "last_posted_file_id" not in st.session_state:
+    st.session_state.last_posted_file_id = None
 
 
 @st.cache_resource
@@ -60,10 +69,12 @@ def make_annotators(color: sv.Color):
     return box_annotator, label_annotator
 
 
-def process_frame(
+def analyze_frame(
     frame: np.ndarray, models: dict[str, tuple], thresholds: dict[str, float]
-) -> np.ndarray:
+) -> tuple[np.ndarray, list[dict]]:
     annotated_frame = frame.copy()
+    detections_out: list[dict] = []
+
     for model_name, (model, names_map, box_ann, label_ann) in models.items():
         try:
             results = model.predict(frame, conf=thresholds[model_name], verbose=False)[
@@ -78,6 +89,21 @@ def process_frame(
             annotated_frame = label_ann.annotate(
                 annotated_frame, detections, labels=labels
             )
+
+            if detections.class_id is not None:
+                for class_id, confidence, xyxy in zip(
+                    detections.class_id,
+                    detections.confidence,
+                    detections.xyxy,
+                ):
+                    detections_out.append(
+                        {
+                            "model": MODEL_PREFIX[model_name],
+                            "label": names_map.get(int(class_id), str(class_id)),
+                            "confidence": round(float(confidence), 4),
+                            "bbox": [round(float(v), 2) for v in xyxy],
+                        }
+                    )
         except Exception as e:
             logger.error(f"Error during prediction/annotation for {model_name}: {e}")
             cv2.putText(
@@ -89,6 +115,14 @@ def process_frame(
                 (0, 0, 255),
                 2,
             )
+
+    return annotated_frame, detections_out
+
+
+def process_frame(
+    frame: np.ndarray, models: dict[str, tuple], thresholds: dict[str, float]
+) -> np.ndarray:
+    annotated_frame, _ = analyze_frame(frame, models, thresholds)
     return annotated_frame
 
 
@@ -112,6 +146,16 @@ def cleanup_previous_output():
     st.session_state.processed_file_id = None
 
 
+def is_pothole_detection(detection: dict) -> bool:
+    """Return True when a YOLO label refers to a pothole (not cracks/other)."""
+    label = str(detection.get("label", "")).lower()
+    return "pothole" in label
+
+
+def pothole_detections_only(detections: list[dict]) -> list[dict]:
+    return [d for d in detections if is_pothole_detection(d)]
+
+
 def handle_image_input(models, thresholds, placeholder):
     # Reset video processing state if switching to image mode
     if st.session_state.processed_file_id is not None:
@@ -121,16 +165,76 @@ def handle_image_input(models, thresholds, placeholder):
         "Upload Image", type=["jpg", "jpeg", "png", "bmp", "webp"], key="img_upload"
     )
     if uploaded_file:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        file_bytes = bytes(uploaded_file.getvalue())
+        img = cv2.imdecode(np.frombuffer(file_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             st.error("Could not decode image. Please upload a valid image file.")
             placeholder.empty()
         else:
             with st.spinner("Processing image..."):
-                processed_img = process_frame(img, models, thresholds)
+                processed_img, detections = analyze_frame(img, models, thresholds)
+
+            # Only pothole-class detections become dashboard records.
+            pothole_hits = pothole_detections_only(detections)
+
             placeholder.image(processed_img, channels="BGR", use_container_width=True)
-            st.success("Image processing complete.")
+            st.success(
+                f"Image processing complete. Found {len(detections)} detection(s) "
+                f"({len(pothole_hits)} pothole)."
+            )
+
+            # A stable per-upload id lets us avoid re-posting the same image on
+            # every Streamlit rerun (e.g. when a slider or checkbox changes).
+            file_id = getattr(uploaded_file, "file_id", uploaded_file.name)
+            already_posted = st.session_state.last_posted_file_id == file_id
+
+            if not pothole_hits:
+                # Only create a pothole record when a pothole is actually
+                # detected. No detections => nothing is sent to the dashboard.
+                st.info(
+                    "No potholes were detected in this image, so nothing was "
+                    "sent to the dashboard."
+                )
+            elif not st.session_state.get("save_to_api", True):
+                st.info("Saving to the dashboard is turned off in the sidebar.")
+            elif already_posted:
+                st.info(
+                    "This image was already saved to the dashboard "
+                    f"(Report ID: `{st.session_state.last_saved_report_id}`)."
+                )
+            else:
+                with st.spinner("Saving results to the dashboard..."):
+                    try:
+                        result = post_image_report(
+                            original_filename=uploaded_file.name,
+                            original_bytes=file_bytes,
+                            annotated_bgr=processed_img,
+                            detections=pothole_hits,
+                            api_url=st.session_state.get("api_url") or get_api_url(),
+                        )
+                        report = result.get("report", {})
+                        report_meta = report.get("metadata", {}) or {}
+                        st.session_state.last_saved_report_id = report.get("id")
+                        st.session_state.last_posted_file_id = file_id
+                        region_name = report_meta.get("region_name", "an area")
+                        lat = report.get("latitude")
+                        lng = report.get("longitude")
+                        st.success(
+                            f"Saved to the dashboard in **{region_name}**. "
+                            f"Report ID: `{report.get('id', 'unknown')}`. "
+                            + (
+                                f"Map pin: ({lat:.5f}, {lng:.5f}). "
+                                if isinstance(lat, (int, float)) and isinstance(lng, (int, float))
+                                else ""
+                            )
+                            + "Refresh the dashboard map to see the new marker."
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to save report to API", exc_info=exc)
+                        st.warning(
+                            "Detection finished, but saving to the dashboard failed. "
+                            f"Details: {exc}"
+                        )
     else:
         placeholder.info("Upload an image using the sidebar to start.")
 
@@ -465,6 +569,25 @@ def main():
     if model_load_failed:
         st.error("One or more models failed to load. Check logs and file paths.")
         st.stop()
+
+    st.sidebar.subheader("☁️ Dashboard Sync")
+    st.session_state.save_to_api = st.sidebar.checkbox(
+        "Save pothole detections to dashboard",
+        value=st.session_state.get("save_to_api", True),
+        key="save_to_api_checkbox",
+    )
+    st.session_state.api_url = st.sidebar.text_input(
+        "Backend API URL",
+        value=st.session_state.get("api_url", get_api_url()),
+        key="api_url_input",
+        help="Vercel API that stores detections in Supabase for the map dashboard.",
+    )
+    if get_write_key():
+        st.sidebar.caption("Write API key loaded from environment.")
+    else:
+        st.sidebar.warning(
+            "Set `POTHOLE_API_WRITE_KEY` in `backend/.env` to save detections."
+        )
 
     st.sidebar.subheader("🎬 Input Source")
     input_mode = st.sidebar.radio(

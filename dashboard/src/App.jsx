@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MapPin, Filter, Download, Calendar, AlertCircle, Eye, Search } from 'lucide-react';
-import { MapContainer, GeoJSON, TileLayer, CircleMarker, Popup } from 'react-leaflet';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { MapPin, Filter, Download, Calendar, AlertCircle, Eye, Search, RefreshCw, X, ArrowLeft } from 'lucide-react';
+import { MapContainer, GeoJSON, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import * as turf from '@turf/turf';
@@ -15,6 +15,107 @@ const severityColors = {
   medium: '#f59e0b',
   low: '#84cc16',
 };
+
+// Shared backend that the Streamlit app also writes to. Falls back to the
+// deployed API so the dashboard works without extra config; override with
+// VITE_API_URL (see .env.example) to point at a local API during development.
+const API_BASE = (
+  import.meta.env.VITE_API_URL || 'https://api-mu-ten-54.vercel.app'
+).replace(/\/$/, '');
+
+// Shared team read token (visible in the browser bundle). Prefer env config;
+// never put the write key or Supabase secret here.
+const API_READ_KEY = (import.meta.env.VITE_API_READ_KEY || '').trim();
+
+function apiHeaders(extra = {}) {
+  const headers = { Accept: 'application/json', ...extra };
+  if (API_READ_KEY) {
+    headers['X-API-Key'] = API_READ_KEY;
+  }
+  return headers;
+}
+
+/** Captures the Leaflet map instance for imperative zoom/fitBounds calls. */
+function MapBinder({ onReady }) {
+  const map = useMap();
+  useEffect(() => {
+    onReady(map);
+  }, [map, onReady]);
+  return null;
+}
+
+// Maps a raw backend report into the shape the map/UI already expects.
+function mapReport(r) {
+  const meta = r.metadata || {};
+  const detections = Array.isArray(meta.detections) ? meta.detections : [];
+  const confidences = detections
+    .map((d) => Number(d.confidence))
+    .filter((n) => !Number.isNaN(n));
+  const confidence = confidences.length ? Math.max(...confidences) : null;
+  const detectionCount =
+    typeof meta.detection_count === 'number' ? meta.detection_count : detections.length;
+  const severity = severityColors[r.severity] ? r.severity : 'medium';
+  const status = r.status === 'in_progress' ? 'inProgress' : r.status || 'pending';
+
+  return {
+    id: r.id,
+    lat: typeof r.latitude === 'number' ? r.latitude : null,
+    lng: typeof r.longitude === 'number' ? r.longitude : null,
+    severity,
+    status,
+    color: severityColors[severity] || severityColors.medium,
+    size: typeof meta.size === 'number' ? meta.size : undefined,
+    detected: new Date(r.created_at),
+    imageUrl: r.annotated_image_url || r.image_url || null,
+    originalImageUrl: r.image_url || null,
+    confidence,
+    detectionCount,
+    regionId: meta.region_id ?? null,
+    regionName: meta.region_name ?? null,
+  };
+}
+
+// Fetches real pothole detections from the shared backend. This replaces the
+// previous hard-coded/generated demo data.
+function useReports() {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/reports`, {
+        headers: apiHeaders(),
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error('Unauthorized — check VITE_API_READ_KEY in dashboard/.env.local');
+        }
+        throw new Error(`Request failed (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      const mapped = (data.reports || [])
+        .map(mapReport)
+        // A record is a mappable pothole only if it has coordinates and at least
+        // one detection. Non-pothole uploads never get coordinates.
+        .filter((p) => p.lat !== null && p.lng !== null && p.detectionCount > 0);
+      setReports(mapped);
+      setError(null);
+    } catch (e) {
+      console.error('Failed to load reports', e);
+      setError(e.message || 'Failed to load pothole data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { reports, loading, error, reload: load };
+}
 
 function normalize(str) {
   return String(str || '')
@@ -70,15 +171,6 @@ function featureName(f) {
   return `Area ${f.id ?? ''}`.trim();
 }
 
-function withinMeters(a, b, meters) {
-  const dKm = turf.distance(turf.point([a.lng, a.lat]), turf.point([b.lng, b.lat]), { units: 'kilometers' });
-  return dKm * 1000 < meters;
-}
-function existsWithinMeters(list, candidate, meters) {
-  for (const p of list) if (withinMeters(p, candidate, meters)) return true;
-  return false;
-}
-
 const PotholeMappingPlatform = () => {
   const [activeTab, setActiveTab] = useState('summary');
   const [map, setMap] = useState(null);
@@ -105,58 +197,50 @@ const PotholeMappingPlatform = () => {
   });
 
 
-  const [potholeData] = useState({
-    critical: 12,
-    high: 28,
-    medium: 45,
-    low: 31,
-    total: 116,
-    repaired: 23,
-    pending: 89,
-    inProgress: 4,
-  });
+  // Real detections from the shared backend (written by the Streamlit app).
+  const { reports: rawPotholes, loading: potholesLoading, error: potholesError, reload: reloadPotholes } =
+    useReports();
 
-  function mulberry32(seed) {
-    return function () {
-      let t = (seed += 0x6d2b79f5);
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  function buildInitialPotholes() {
-    const rand = mulberry32(12345);
-    const torontoCenter = { lat: 43.6532, lng: -79.3832 };
-    const colors = severityColors;
-    const items = [];
-    const targetCount = 80;
-    const maxAttempts = targetCount * 50;
-    let attempts = 0;
-
-    while (items.length < targetCount && attempts < maxAttempts) {
-      attempts++;
-      const severity = SEVERITIES[Math.floor(rand() * SEVERITIES.length)];
-      const status = STATUSES[Math.floor(rand() * STATUSES.length)];
-      const size = Math.floor(rand() * 40) + 10;
-      const detected = new Date(Date.now() - rand() * 7 * 24 * 60 * 60 * 1000);
-      const cand = {
-        id: attempts,
-        lat: torontoCenter.lat + (rand() - 0.5) * 0.15,
-        lng: torontoCenter.lng + (rand() - 0.5) * 0.2,
-        severity,
-        status,
-        color: colors[severity],
-        size,
-        detected,
-      };
-      if (!existsWithinMeters(items, cand, 10)) items.push(cand);
-    }
-    return items.map((p, i) => ({ ...p, id: i }));
-  }
-  const [potholes] = useState(buildInitialPotholes);
+  // Details view state.
+  const [selectedPothole, setSelectedPothole] = useState(null);
 
   const neighborhoodsFC = useNeighborhoods();
+
+  // Attach a region name (and feature index) to each pothole. We prefer the
+  // region stored on the record, and fall back to a point-in-polygon lookup so
+  // older records still resolve to a region.
+  const potholes = useMemo(() => {
+    if (!rawPotholes.length) return [];
+    return rawPotholes.map((p) => {
+      if (p.regionName && p.regionId) return p;
+      if (!neighborhoodsFC) return p;
+      try {
+        const pt = turf.point([p.lng, p.lat]);
+        const idx = neighborhoodsFC.features.findIndex((f) =>
+          turf.booleanPointInPolygon(pt, f)
+        );
+        if (idx >= 0) {
+          return { ...p, regionName: p.regionName || featureName(neighborhoodsFC.features[idx]) };
+        }
+      } catch {
+        // ignore lookup failures; region simply stays unknown
+      }
+      return p;
+    });
+  }, [rawPotholes, neighborhoodsFC]);
+
+  // Live summary counts derived from real data (no more hard-coded numbers).
+  const summary = useMemo(() => {
+    const s = { critical: 0, high: 0, medium: 0, low: 0, total: 0, repaired: 0, pending: 0, inProgress: 0 };
+    for (const p of potholes) {
+      s.total += 1;
+      if (s[p.severity] !== undefined) s[p.severity] += 1;
+      if (p.status === 'repaired') s.repaired += 1;
+      else if (p.status === 'inProgress') s.inProgress += 1;
+      else s.pending += 1;
+    }
+    return s;
+  }, [potholes]);
 
   const neighborhoodIndex = useMemo(() => {
     if (!neighborhoodsFC?.features?.length) return [];
@@ -198,12 +282,35 @@ const PotholeMappingPlatform = () => {
 
       const min = Number(sizeMin);
       const max = Number(sizeMax);
-      if (sizeMin !== '' && p.size < min) return false;
-      if (sizeMax !== '' && p.size > max) return false;
+      if (sizeMin !== '' && (typeof p.size !== 'number' || p.size < min)) return false;
+      if (sizeMax !== '' && (typeof p.size !== 'number' || p.size > max)) return false;
 
       return true;
     });
   }, [potholes, selectedFilters, neighborhoodsFC, selectedNeighborhoodIds]);
+
+  // Region-details view: active only when exactly one region is selected.
+  const selectedFeature = useMemo(() => {
+    if (!neighborhoodsFC || selectedNeighborhoodIds.size !== 1) return null;
+    const idx = [...selectedNeighborhoodIds][0];
+    return neighborhoodsFC.features[idx] ?? null;
+  }, [neighborhoodsFC, selectedNeighborhoodIds]);
+
+  const selectedRegionName = selectedFeature ? featureName(selectedFeature) : null;
+
+  // All potholes physically inside the selected region (independent of the other
+  // marker filters, so the gallery always shows every detection in the region).
+  const regionPotholes = useMemo(() => {
+    if (!selectedFeature) return [];
+    return potholes.filter((p) => {
+      if (p.lat === null || p.lng === null) return false;
+      try {
+        return turf.booleanPointInPolygon(turf.point([p.lng, p.lat]), selectedFeature);
+      } catch {
+        return false;
+      }
+    });
+  }, [selectedFeature, potholes]);
 
   const toggleSetValue = (set, value) => {
     const next = new Set(set);
@@ -363,12 +470,32 @@ const PotholeMappingPlatform = () => {
           <div className="p-4">
             {activeTab === 'summary' && (
               <div className="space-y-3">
-                <h2 className="text-lg font-bold text-gray-800 mb-4">Detection Summary</h2>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-lg font-bold text-gray-800">Detection Summary</h2>
+                  <button
+                    onClick={reloadPotholes}
+                    className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-sm"
+                    title="Refresh detections"
+                  >
+                    <RefreshCw size={16} className={potholesLoading ? 'animate-spin' : ''} />
+                    Refresh
+                  </button>
+                </div>
+                <div className="flex items-center justify-between p-3 rounded-lg bg-blue-50 text-blue-900">
+                  <span className="font-semibold">Total Detections</span>
+                  <span className="font-bold">{summary.total}</span>
+                </div>
+                {potholesLoading && (
+                  <p className="text-sm text-gray-500">Loading detections…</p>
+                )}
+                {potholesError && (
+                  <p className="text-sm text-red-600">Could not load detections: {potholesError}</p>
+                )}
                 {[
-                  { label: 'Critical Severity', value: potholeData.critical, color: 'bg-red-600' },
-                  { label: 'High Severity', value: potholeData.high, color: 'bg-orange-600' },
-                  { label: 'Medium Severity', value: potholeData.medium, color: 'bg-yellow-500' },
-                  { label: 'Low Severity', value: potholeData.low, color: 'bg-green-500' },
+                  { label: 'Critical Severity', value: summary.critical, color: 'bg-red-600' },
+                  { label: 'High Severity', value: summary.high, color: 'bg-orange-600' },
+                  { label: 'Medium Severity', value: summary.medium, color: 'bg-yellow-500' },
+                  { label: 'Low Severity', value: summary.low, color: 'bg-green-500' },
                 ].map((row) => (
                   <div
                     key={row.label}
@@ -383,9 +510,9 @@ const PotholeMappingPlatform = () => {
                 ))}
                 <div className="border-t pt-3 mt-4 space-y-2">
                   {[
-                    { icon: <AlertCircle size={20} />, label: 'Pending', count: potholeData.pending },
-                    { icon: <div className="text-blue-600">⚙</div>, label: 'In Progress', count: potholeData.inProgress },
-                    { icon: <div className="text-green-600">✓</div>, label: 'Repaired', count: potholeData.repaired },
+                    { icon: <AlertCircle size={20} />, label: 'Pending', count: summary.pending },
+                    { icon: <div className="text-blue-600">⚙</div>, label: 'In Progress', count: summary.inProgress },
+                    { icon: <div className="text-green-600">✓</div>, label: 'Repaired', count: summary.repaired },
                   ].map((row) => (
                     <div
                       key={row.label}
@@ -575,6 +702,13 @@ const PotholeMappingPlatform = () => {
         {/* Map Area */}
         <main className="flex-1 relative" style={{ height: '100%' }}>
           <div className="absolute top-4 right-4 z-[1000] bg-white rounded-lg shadow-lg p-2 flex gap-2">
+            <button
+              className="p-2 hover:bg-gray-100 rounded"
+              onClick={reloadPotholes}
+              title="Refresh detections from backend"
+            >
+              <RefreshCw size={20} className={potholesLoading ? 'animate-spin' : ''} />
+            </button>
             <button className="p-2 hover:bg-gray-100 rounded"><Filter size={20} /></button>
             <button className="p-2 hover:bg-gray-100 rounded"><MapPin size={20} /></button>
             <button className="p-2 hover:bg-gray-100 rounded"><Calendar size={20} /></button>
@@ -598,8 +732,8 @@ const PotholeMappingPlatform = () => {
               zoom={12}
               style={{ height: '100%', width: '100%' }}
               zoomControl={false}
-              whenCreated={setMap}
             >
+              <MapBinder onReady={setMap} />
               <TileLayer
                 attribution="© OpenStreetMap contributors, © CARTO"
                 url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
@@ -621,18 +755,142 @@ const PotholeMappingPlatform = () => {
                   pathOptions={{ fillColor: p.color, fillOpacity: 0.8, color: 'white', weight: 2 }}
                 >
                   <Popup>
-                    <div className="text-sm">
-                      <div className="font-bold text-lg capitalize">{p.severity}</div>
-                      <div>Size: {p.size}cm</div>
+                    <div className="text-sm" style={{ minWidth: 200 }}>
+                      {p.imageUrl && (
+                        <img
+                          src={p.imageUrl}
+                          alt="Detected pothole"
+                          style={{ width: '100%', maxHeight: 150, objectFit: 'cover', borderRadius: 6, marginBottom: 6 }}
+                        />
+                      )}
+                      <div className="font-bold text-base capitalize">{p.severity} severity</div>
+                      {p.confidence !== null && (
+                        <div>Confidence: {(p.confidence * 100).toFixed(1)}%</div>
+                      )}
                       <div>Status: <span className="capitalize">{p.status === 'inProgress' ? 'In Progress' : p.status}</span></div>
-                      <div>Detected: {p.detected.toLocaleDateString()}</div>
-                      <div className="text-xs text-gray-500 mt-1">{p.lat.toFixed(4)}, {p.lng.toFixed(4)}</div>
+                      <div>Region: {p.regionName || 'Unknown'}</div>
+                      <div>Detected: {p.detected.toLocaleString()}</div>
+                      <div className="text-xs text-gray-500 mt-1">{p.lat.toFixed(5)}, {p.lng.toFixed(5)}</div>
                     </div>
                   </Popup>
                 </CircleMarker>
               ))}
             </MapContainer>
           </div>
+
+          {/* Region-details panel: opens when exactly one region is selected. */}
+          {selectedFeature && (
+            <div className="absolute top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl z-[1100] flex flex-col">
+              <div className="flex items-center justify-between px-4 py-3 bg-blue-900 text-white">
+                <button
+                  onClick={() => setSelectedNeighborhoodIds(new Set())}
+                  className="flex items-center gap-2 hover:text-blue-200"
+                >
+                  <ArrowLeft size={18} />
+                  Back to map
+                </button>
+                <button
+                  onClick={() => setSelectedNeighborhoodIds(new Set())}
+                  className="p-1 hover:bg-blue-800 rounded"
+                  title="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="px-4 py-3 border-b">
+                <h2 className="text-lg font-bold text-gray-800">{selectedRegionName}</h2>
+                <p className="text-sm text-gray-600">
+                  {regionPotholes.length} pothole{regionPotholes.length === 1 ? '' : 's'} detected
+                </p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4">
+                {regionPotholes.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-center">
+                    <p className="text-gray-700 font-semibold text-base px-4">
+                      No potholes were detected within this region.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {regionPotholes.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => setSelectedPothole(p)}
+                        className="text-left border rounded-lg overflow-hidden hover:shadow-md transition-shadow"
+                      >
+                        {p.imageUrl ? (
+                          <img
+                            src={p.imageUrl}
+                            alt="Detected pothole"
+                            className="w-full h-24 object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-gray-400 text-xs">
+                            No image
+                          </div>
+                        )}
+                        <div className="p-2">
+                          <div className="flex items-center gap-1">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }} />
+                            <span className="text-xs font-medium capitalize">{p.severity}</span>
+                          </div>
+                          {p.confidence !== null && (
+                            <div className="text-xs text-gray-600">{(p.confidence * 100).toFixed(0)}% conf.</div>
+                          )}
+                          <div className="text-[11px] text-gray-500">{p.detected.toLocaleString()}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Single-pothole detail modal (from map popup or region gallery). */}
+          {selectedPothole && (
+            <div
+              className="absolute inset-0 z-[1200] bg-black/50 flex items-center justify-center p-4"
+              onClick={() => setSelectedPothole(null)}
+            >
+              <div
+                className="bg-white rounded-lg max-w-lg w-full max-h-[90%] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b">
+                  <h3 className="font-bold text-gray-800 capitalize">{selectedPothole.severity} pothole</h3>
+                  <button
+                    onClick={() => setSelectedPothole(null)}
+                    className="p-1 hover:bg-gray-100 rounded"
+                    title="Close"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                {selectedPothole.imageUrl && (
+                  <img
+                    src={selectedPothole.imageUrl}
+                    alt="Detected pothole"
+                    className="w-full max-h-80 object-contain bg-gray-50"
+                  />
+                )}
+                <div className="p-4 space-y-1 text-sm text-gray-700">
+                  <div>Region: <span className="font-medium">{selectedPothole.regionName || 'Unknown'}</span></div>
+                  {selectedPothole.confidence !== null && (
+                    <div>Confidence: <span className="font-medium">{(selectedPothole.confidence * 100).toFixed(1)}%</span></div>
+                  )}
+                  <div>Detections in image: <span className="font-medium">{selectedPothole.detectionCount}</span></div>
+                  <div>Status: <span className="font-medium capitalize">{selectedPothole.status === 'inProgress' ? 'In Progress' : selectedPothole.status}</span></div>
+                  <div>Detected: <span className="font-medium">{selectedPothole.detected.toLocaleString()}</span></div>
+                  <div className="text-xs text-gray-500 pt-1">
+                    Coordinates: {selectedPothole.lat.toFixed(5)}, {selectedPothole.lng.toFixed(5)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="absolute bottom-4 left-4 bg-white rounded-lg shadow-lg p-4 z-[1000]">
             <h3 className="font-bold text-sm mb-2">Severity Legend</h3>

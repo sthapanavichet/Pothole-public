@@ -1,0 +1,693 @@
+\documentclass[12pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+
+\renewcommand{\arraystretch}{1.2}
+\newcommand{\toprule}{\hline}
+\newcommand{\midrule}{\hline}
+\newcommand{\bottomrule}{\hline}
+
+\title{Security Plan: Pothole Detection System\\
+\large Raspberry Pi Pipeline, Cloud Backend, and Frontend Applications}
+\author{Capstone Project Team}
+\date{July 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This security plan identifies threats across the Raspberry~Pi vision pipeline,
+the Vercel/Supabase cloud backend, and the Streamlit/React frontends; prioritizes
+risks by likelihood and impact; defines authentication, authorization, input
+validation, and data-security controls; and documents testing techniques, tools,
+findings, mitigations, accepted risks, and re-test closure criteria aligned to
+the course marking rubric.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Scope and System Boundary}
+
+This report covers three cooperating parts of the pothole detection system:
+
+\begin{enumerate}
+    \item the Raspberry Pi vision-pipeline code presently in \texttt{rpi\_model/}
+          and the planned SIM/cellular upload function;
+    \item the cloud backend: a Vercel Next.js API (\texttt{api/}) backed by
+          Supabase (Postgres table \texttt{pothole\_reports} and Storage bucket
+          \texttt{pothole-images}); and
+    \item the frontend applications that talk to that API: the Streamlit YOLO
+          detection app (\texttt{backend/}) and the React map dashboard
+          (\texttt{dashboard/}).
+\end{enumerate}
+
+Sensitive assets in scope are camera frames, annotated frames, pothole
+detections, location data, model files, device and API credentials, Supabase
+service secrets, map imagery URLs, and service availability.
+
+\subsection{Data Flow}
+
+\begin{verbatim}
+Camera -> Raspberry Pi processing -> local Flask dashboard
+                                   -> [planned] SIM/cellular HTTPS upload
+                                                  -> Vercel API -> Supabase
+
+Uploaded media -> Streamlit YOLO -> HTTPS POST (write key)
+                                          -> Vercel API -> Supabase
+
+React dashboard <- HTTPS GET (read key) <- Vercel API <- Supabase
+\end{verbatim}
+
+Hardware enclosure and physical deployment remain a placeholder for the hardware
+engineer (Section~\ref{sec:hardware}).
+
+\section{Threat Identification and Risk Prioritization}
+\label{sec:threats}
+
+\subsection{Threat Identification Method}
+
+Threats were identified by reviewing attack surfaces on each trust boundary:
+local network exposure of the Pi Flask dashboard, outbound cellular upload,
+public HTTPS API routes, browser-origin calls to the API, uploaded image/
+metadata payloads, and direct Supabase client access. Candidate threats include
+missing authentication, privilege abuse, injection, insecure transport, secret
+leakage, denial of service, and supply-chain compromise.
+
+\subsection{Risk Prioritization Method}
+
+Each threat is scored as Low, Medium, or High for \textbf{likelihood} and
+\textbf{impact}. \textbf{Priority} is derived as follows:
+
+\begin{itemize}
+    \item \textbf{Critical}: High likelihood and High impact, or any path that
+          yields unauthenticated write access to production data/storage;
+    \item \textbf{High}: High impact with at least Medium likelihood, or High
+          likelihood with Medium impact;
+    \item \textbf{Medium}: Medium/Medium or lower combinations that still require
+          tracked remediation or accepted-risk justification.
+\end{itemize}
+
+Every risk includes a \textbf{testing focus} so verification maps directly to the
+threat.
+
+\subsection{Pi and Cellular Upload Risk Register}
+
+\begin{longtable}{p{0.22\textwidth}p{0.10\textwidth}p{0.10\textwidth}p{0.12\textwidth}p{0.36\textwidth}}
+\caption{Pi and cellular-upload risk register}\label{tab:risks}\\
+\toprule
+Risk / threat & Likelihood & Impact & Priority & Testing focus \\
+\midrule
+\endfirsthead
+\toprule
+Risk / threat & Likelihood & Impact & Priority & Testing focus \\
+\midrule
+\endhead
+Unauthenticated users can view the Pi dashboard, raw/annotated streams, and detection log. & High & High & Critical & Request every Flask route without credentials from a separate network client. \\
+Camera frames and detection/location data travel over HTTP rather than HTTPS. & High & High & Critical & Capture traffic; confirm HTTP is refused in deployment. \\
+Many concurrent MJPEG streams exhaust Pi CPU, memory, or bandwidth. & High & High & High & Concurrent-connection and bandwidth tests; verify connection limits. \\
+Plaintext location lookup (\texttt{ip-api.com}) is untrusted and injectable into the UI. & Medium & High & High & Simulate modified, malformed, slow, and unavailable responses; XSS payload test. \\
+Planned cellular uploader accepts forged, replayed, or modified requests. & Medium & High & High & Invalid credential, altered body, reused timestamp/nonce/request-ID tests. \\
+Lost or copied device credentials submit false detections. & Medium & High & High & Per-device revocation and replacement test. \\
+Unbounded configuration or malformed local inputs crash or starve the pipeline. & Medium & Medium & Medium & Boundary tests for dimensions, JPEG quality, inference settings, paths. \\
+Unpinned dependencies or untrusted model checkpoints enable supply-chain compromise. & Medium & High & High & Dependency audit and model checksum/provenance verification. \\
+Saved output frames fill local storage when \texttt{SAVE\_OUTPUT} is enabled. & Medium & Medium & Medium & Retention/quota and full-disk recovery tests. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Cloud Backend and Frontend Risk Register}
+
+\begin{longtable}{p{0.22\textwidth}p{0.10\textwidth}p{0.10\textwidth}p{0.12\textwidth}p{0.36\textwidth}}
+\caption{Cloud backend and frontend risk register}\label{tab:cloud-risks}\\
+\toprule
+Risk / threat & Likelihood & Impact & Priority & Testing focus \\
+\midrule
+\endfirsthead
+\toprule
+Risk / threat & Likelihood & Impact & Priority & Testing focus \\
+\midrule
+\endhead
+Unauthenticated clients can \texttt{POST}/\texttt{PATCH}/\texttt{DELETE} reports and upload images. & High & High & Critical & Mutation routes without \texttt{X-API-Key}; expect 401. \\
+Unauthenticated clients can enumerate reports via \texttt{GET /api/reports}. & High & Medium & High & GET without read key; expect 401 when \texttt{API\_READ\_KEY} is set. \\
+Any website can call the API from a browser (CORS \texttt{*}). & High & High & High & OPTIONS/GET from an unlisted Origin; expect denial. \\
+Upload endpoints accept spoofed \texttt{Content-Type} or oversized payloads. & Medium & High & High & Non-image bytes labelled JPEG; uploads $>$10\,MB. \\
+Empty/fabricated detections become map markers and storage clutter. & Medium & Medium & High & POST with \texttt{detection\_count=0}; expect 400. \\
+Supabase table readable/writable with a leaked anon key if RLS is off. & Medium & High & High & Query table with anon key after RLS enablement. \\
+Write key or Supabase secret appears in frontend bundles or git. & Medium & Critical & Critical & Secret scan; confirm dashboard ships only the read key. \\
+API abuse exhausts bandwidth, storage, or function quotas. & High & High & High & Burst requests; verify HTTP 429. \\
+Production 500 responses leak internal exception text. & Medium & Medium & Medium & Forced server error; expect generic message. \\
+XSS via unsanitized dashboard rendering of API/location text. & Medium & High & High & Inject script payloads into notes/location fields; verify text-only render. \\
+SQL injection via report filters, IDs, or metadata if raw SQL were used. & Low & High & Medium & Parameterized ORM/client checks; malicious ID/query strings. \\
+Command injection via filenames or configuration reaching a shell. & Low & High & Medium & Special-character filenames and env values; confirm no shell execution. \\
+\bottomrule
+\end{longtable}
+
+\section{Authentication and Authorization}
+\label{sec:auth}
+
+\subsection{Current Findings: Weak or Missing Authentication}
+
+\paragraph{Raspberry Pi Flask dashboard.}
+The Pi application currently has \textbf{no authentication}, passwords, tokens,
+roles, or route-level authorization. It binds to \texttt{0.0.0.0}, exposing:
+
+\begin{itemize}
+    \item \texttt{/} --- dashboard;
+    \item \texttt{/stream/original.mjpg} --- raw camera feed;
+    \item \texttt{/stream/edges.mjpg} --- annotated camera feed;
+    \item \texttt{/detections.json} --- recent detections and location text.
+\end{itemize}
+
+This is a \textbf{Critical} finding if the Pi is reachable beyond a trusted
+maintenance network. Until authentication is added, access must be limited to
+localhost or a firewall/VPN-protected network.
+
+\paragraph{Cloud API (implemented).}
+The Vercel API previously accepted unauthenticated writes. It now enforces
+API-key authentication:
+
+\begin{itemize}
+    \item \textbf{Write privilege}: \texttt{API\_WRITE\_KEY} required for
+          \texttt{POST}/\texttt{PATCH}/\texttt{DELETE} and
+          \texttt{/api/reports/backfill-locations};
+    \item \textbf{Read privilege}: \texttt{API\_READ\_KEY} required for
+          \texttt{GET /api/reports} and \texttt{GET /api/reports/[id]} when
+          configured (enforced in production);
+    \item \textbf{Health}: \texttt{GET /api/health} remains unauthenticated but
+          rate-limited.
+\end{itemize}
+
+Keys are compared with constant-time equality. Clients send
+\texttt{X-API-Key} or \texttt{Authorization: Bearer}.
+
+\subsection{Access Privileges}
+
+\begin{longtable}{p{0.24\textwidth}p{0.28\textwidth}p{0.38\textwidth}}
+\caption{Access privilege matrix}\label{tab:privileges}\\
+\toprule
+Principal & Credential / channel & Privileges \\
+\midrule
+\endfirsthead
+\toprule
+Principal & Credential / channel & Privileges \\
+\midrule
+\endhead
+Anonymous network client (Pi) & None & Full local dashboard/stream access today (unacceptable for public networks). \\
+Streamlit detection app & \texttt{POTHOLE\_API\_WRITE\_KEY} & Create reports only (POST multipart). \\
+React dashboard / browser & \texttt{VITE\_API\_READ\_KEY} & Read reports only (GET). No mutate. \\
+Vercel API process & \texttt{SUPABASE\_SECRET\_KEY} & Server-side insert/update/delete/storage; never shipped to browsers. \\
+Browser with Supabase anon key & Publishable/anon key & No table access when RLS is enabled with no public policies. \\
+Future Pi cellular device & Per-device revocable credential & Upload only to fixed HTTPS ingestion URL; no inbound server role. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Password Entropy}
+
+\begin{itemize}
+    \item \textbf{Pi dashboard today:} password entropy is \emph{not applicable}
+          because no password login exists. If a local password is introduced, it
+          must be hashed with Argon2id or bcrypt, rate-limited, never stored in
+          source, and meet a minimum entropy policy (at least 12 characters with
+          mixed classes, or a $\geq$128-bit random secret).
+    \item \textbf{Cloud API keys:} not user passwords; they are long random
+          secrets (\texttt{secrets.token\_urlsafe}, $\geq$24--32 bytes). Entropy
+          derives from cryptographic randomness rather than human-chosen
+          passwords. Keys are rotated by regenerating and updating Vercel/local
+          env vars.
+    \item \textbf{Future end-user accounts:} if Supabase Auth/OAuth is added,
+          enforce provider password policy or SSO, MFA for operators, and hashed
+          storage managed by the auth provider.
+\end{itemize}
+
+\subsection{Authentication and Authorization Test Cases}
+
+\begin{longtable}{p{0.08\textwidth}p{0.42\textwidth}p{0.40\textwidth}}
+\caption{Authentication and authorization tests}\label{tab:auth-tests}\\
+\toprule
+ID & Test & Expected result \\
+\midrule
+\endfirsthead
+\toprule
+ID & Test & Expected result \\
+\midrule
+\endhead
+A-01 & Call every Pi Flask route with no credentials from another host. & Today: access succeeds (documented vulnerability). Target: denial after auth is added. \\
+A-02 & \texttt{GET /api/reports} with no key. & HTTP 401. \\
+A-03 & \texttt{POST /api/reports} with no key. & HTTP 401. \\
+A-04 & \texttt{GET /api/reports} with valid read key. & HTTP 200. \\
+A-05 & \texttt{POST /api/reports} with read key only. & HTTP 401 (read cannot elevate to write). \\
+A-06 & \texttt{DELETE /api/reports/[id]} with write key missing/wrong. & HTTP 401. \\
+A-07 & Dashboard bundle/source review for write/secret keys. & Only read key present; no Supabase secret. \\
+A-08 & Streamlit post with write key unset. & Client refuses before network call. \\
+A-09 & (Future) weak Pi password / brute-force attempts. & Lockout/rate-limit; hashes only stored. \\
+\bottomrule
+\end{longtable}
+
+\textbf{Evidence already collected for cloud auth:} production
+\texttt{https://api-mu-ten-54.vercel.app} returns 401 for unauthenticated GET/POST
+and 200 for authorized GET with the read key.
+
+\section{Input Validation and Injection Testing}
+\label{sec:validation}
+
+\subsection{Validation Strategy: Client-Side and Server-Side}
+
+Security-critical validation is enforced on the \textbf{server} (Vercel API /
+future cloud ingestion). Clients may pre-check for usability, but are never
+trusted:
+
+\begin{itemize}
+    \item \textbf{Streamlit (client):} only posts when detections contain
+          ``pothole''; refuses to post without a write key; trims notes.
+    \item \textbf{React dashboard (client):} filters markers to records with
+          coordinates and \texttt{detectionCount > 0}; does not accept free-form
+          write inputs to the API.
+    \item \textbf{API (server):} validates content type, image magic bytes, size
+          ($\leq$10\,MB), metadata JSON shape/size, severity/status enums, notes
+          length ($\leq$2000), and rejects empty detections with HTTP~400.
+    \item \textbf{Pi (local):} must add range checks for env-derived numeric
+          config (dimensions, JPEG quality 1--100, confidence 0--1, etc.).
+\end{itemize}
+
+\subsection{Injection Attack Surfaces}
+
+\begin{itemize}
+    \item \textbf{SQL injection.} The API uses the Supabase client with
+          parameterized queries/filters (no string-concatenated SQL). Direct SQL
+          from browsers is blocked by RLS. Regression tests still send malicious
+          IDs and query strings.
+    \item \textbf{Cross-site scripting (XSS).} Pi dashboard historically used
+          \texttt{innerHTML} for external location text --- high risk. Cloud
+          notes/metadata must be rendered as text in the React UI. CORS
+          allowlisting reduces hostile-site scripted API abuse from browsers.
+    \item \textbf{Command injection.} Neither Pi nor API currently shells out on
+          user input; filenames are sanitized. Tests still use
+          \texttt{; rm -rf}, backticks, and newline names to confirm no shell
+          path exists.
+    \item \textbf{Other input abuse.} Oversized JSON, type confusion
+          (array instead of object metadata), spoofed MIME types, path traversal
+          in filenames.
+\end{itemize}
+
+\subsection{Input Validation and Injection Test Cases}
+
+\begin{longtable}{p{0.08\textwidth}p{0.42\textwidth}p{0.40\textwidth}}
+\caption{Input validation and injection tests}\label{tab:inject-tests}\\
+\toprule
+ID & Test vector & Expected result \\
+\midrule
+\endfirsthead
+\toprule
+ID & Test vector & Expected result \\
+\midrule
+\endhead
+I-01 & POST metadata with \texttt{detection\_count=0}. & HTTP 400; no row created. \\
+I-02 & Upload \texttt{.exe}/HTML bytes with \texttt{Content-Type: image/jpeg}. & Rejected (magic-byte mismatch). \\
+I-03 & Upload image $>$10\,MB. & Rejected. \\
+I-04 & Metadata JSON array or oversized blob. & HTTP 400. \\
+I-05 & Invalid severity/status strings. & HTTP 400. \\
+I-06 & Notes with \texttt{<script>alert(1)</script>}. & Stored only if authorized write; dashboard renders as text, does not execute. \\
+I-07 & Pi location response containing script markup. & Must display via \texttt{textContent}; script must not run. \\
+I-08 & Report ID \texttt{1; DROP TABLE pothole\_reports;--}. & No SQL execution; 404/validation error only. \\
+I-09 & Filename \texttt{../../etc/passwd;id.jpg}. & Sanitized object key; no path escape / no shell. \\
+I-10 & Extreme Pi env values (negative sizes, quality 999). & Safe rejection or clamped config (target after PI-07). \\
+\bottomrule
+\end{longtable}
+
+\section{Data Security and Privacy Checks}
+\label{sec:data}
+
+\subsection{Secure Transmission (HTTPS / TLS)}
+
+\begin{itemize}
+    \item \textbf{Cloud API and frontends:} production traffic uses HTTPS
+          (\texttt{https://api-mu-ten-54.vercel.app}). Streamlit posts and
+          dashboard fetches must target HTTPS URLs; no HTTP fallback for cloud
+          calls.
+    \item \textbf{Pi today:} local Flask dashboard and
+          \texttt{http://ip-api.com} location lookup use plaintext HTTP --- a
+          Critical data-exposure risk on untrusted networks.
+    \item \textbf{Planned SIM upload:} HTTPS only, with certificate validation;
+          HTTP forbidden.
+\end{itemize}
+
+\subsection{Encryption in Transit and at Rest}
+
+\begin{itemize}
+    \item \textbf{In transit:} TLS terminated by Vercel and Supabase for API and
+          database/storage connections from the server.
+    \item \textbf{At rest:} managed encryption at rest provided by Supabase /
+          underlying cloud storage for Postgres data and bucket objects.
+    \item \textbf{Secrets at rest on developer machines:} stored in gitignored
+          \texttt{.env} / \texttt{.env.local} files and Vercel encrypted
+          environment variables---not in the repository.
+\end{itemize}
+
+\subsection{Data Leakage and Sensitive Information Exposure}
+
+Sensitive classes include camera imagery (people, plates, addresses), GPS /
+temporary location, API keys, and Supabase secrets.
+
+Controls and checks:
+
+\begin{itemize}
+    \item Frontends never embed \texttt{SUPABASE\_SECRET\_KEY} or
+          \texttt{API\_WRITE\_KEY}.
+    \item Production API errors return generic messages (no stack traces or
+          provider internals).
+    \item Rate limits and auth reduce anonymous bulk export of reports.
+    \item Pi must not expose streams on public/cellular networks until auth and
+          TLS exist; minimize retained frames and define retention before
+          enabling \texttt{SAVE\_OUTPUT}.
+    \item Public storage URLs are an accepted demo risk with compensating
+          write-path controls; private signed URLs are the longer-term fix.
+\end{itemize}
+
+\subsection{Data Security Test Cases}
+
+\begin{longtable}{p{0.08\textwidth}p{0.42\textwidth}p{0.40\textwidth}}
+\caption{Data security and privacy tests}\label{tab:data-tests}\\
+\toprule
+ID & Test & Expected result \\
+\midrule
+\endfirsthead
+\toprule
+ID & Test & Expected result \\
+\midrule
+\endhead
+D-01 & Confirm production API URL scheme is HTTPS. & \texttt{https://} only. \\
+D-02 & Attempt HTTP cleartext to production API. & Redirect or connection failure; no successful cleartext API use. \\
+D-03 & Capture Streamlit upload and dashboard fetch. & TLS; no write key in dashboard traffic. \\
+D-04 & Force API 500 in production. & Generic error body; no secret/stack leakage. \\
+D-05 & Search git history / bundles for secret patterns (Gitleaks). & No live secrets committed. \\
+D-06 & Query Supabase with anon key after RLS. & Access denied to \texttt{pothole\_reports}. \\
+D-07 & Pi traffic capture on LAN. & Today: plaintext imagery/location visible (open finding PI-02). \\
+\bottomrule
+\end{longtable}
+
+\section{Testing Techniques and Tools}
+\label{sec:testing}
+
+This section describes \emph{how} the threats in Section~\ref{sec:threats} are
+verified. Techniques are applied across Pi, API, and frontends.
+
+\subsection{Static Application Security Testing (SAST)}
+
+SAST analyzes source without executing it. Planned/used tools:
+
+\begin{itemize}
+    \item \textbf{Bandit} --- Python SAST for the Pi and Streamlit code (unsafe
+          functions, hard-coded secrets, weak crypto patterns).
+    \item \textbf{Semgrep} --- rule-based SAST for Python/TypeScript (Flask
+          security, insecure HTTP, dangerous DOM sinks).
+    \item \textbf{ESLint security plugins / TypeScript compiler} --- dashboard
+          and API static checks.
+    \item \textbf{Ruff} --- already used for Pi linting; complements SAST hygiene.
+\end{itemize}
+
+Evidence: clean reports or documented false positives / accepted risks.
+
+\subsection{Dynamic Application Security Testing (DAST)}
+
+DAST exercises a running service with crafted HTTP requests:
+
+\begin{itemize}
+    \item \textbf{OWASP ZAP} --- automated spider/active scan against the Pi
+          Flask dashboard (when safely reachable on a lab network) and against a
+          staging copy of the cloud API.
+    \item \textbf{Burp Suite} --- manual intercept/replay of API requests to
+          tamper with headers, bodies, cookies/tokens, and CORS preflights.
+    \item \textbf{curl / HTTPie scripts} --- repeatable regression checks for
+          401/403/400/429 behaviour on production and local API.
+\end{itemize}
+
+DAST focuses on missing authentication, privilege escalation (read key used as
+write), injection payloads, TLS downgrade attempts, and information leakage in
+responses.
+
+\subsection{Manual Code Review}
+
+Reviewers inspect Flask routes, Next.js API handlers (\texttt{api/lib/auth.ts},
+\texttt{storage.ts}, \texttt{http.ts}), Streamlit upload client, React fetch
+paths, logging, model loading, and systemd/service configuration. Checklist
+items: secrets in source, auth on every mutating route, validation before
+persistence, safe rendering, and privilege separation.
+
+\subsection{Input Validation Checks}
+
+Covered in Section~\ref{sec:validation}: boundary values, type confusion,
+magic-byte mismatches, and injection strings are sent to both client pre-checks
+(expect soft failure) and server endpoints (expect hard rejection).
+
+\subsection{Authentication and Authorization Testing}
+
+Covered in Section~\ref{sec:auth}: missing credentials, wrong credentials, wrong
+privilege class, and future password-entropy/brute-force cases.
+
+\subsection{Additional Supporting Tools}
+
+\begin{longtable}{p{0.28\textwidth}p{0.32\textwidth}p{0.30\textwidth}}
+\caption{Security tools and required evidence}\label{tab:tools}\\
+\toprule
+Tool / technique & Application & Required evidence \\
+\midrule
+\endfirsthead
+\toprule
+Tool / technique & Application & Required evidence \\
+\midrule
+\endhead
+Manual code review & Pi, API, Streamlit, dashboard & Review notes linked to finding IDs. \\
+Bandit / Semgrep (SAST) & Python/TS sources & Scan report or waived findings. \\
+OWASP ZAP (DAST) & Pi dashboard; staging API & Scan summary + false-positive review. \\
+Burp Suite (DAST) & API request tampering & Request/response exports for A-/I-/D-cases. \\
+\texttt{pip-audit} / \texttt{npm audit} & Dependencies & Audit output; pinned versions. \\
+Gitleaks & Repo + history & No unreviewed secrets. \\
+curl regression scripts & Production API auth/CORS/validation & Timestamped command output. \\
+Load / concurrency tests & Pi MJPEG; API rate limits & Resource metrics; HTTP 429 proof. \\
+\bottomrule
+\end{longtable}
+
+\section{Subsystem Detail: Raspberry Pi and Planned SIM Upload}
+\label{sec:pi}
+
+\subsection{Pi Input Validation and Injection (Current Code)}
+
+Numeric environment values are converted with \texttt{int()}/\texttt{float()}
+without range checks. Extreme values can exhaust resources. The location lookup
+response is inserted with JavaScript \texttt{innerHTML}, enabling XSS if the
+HTTP response is tampered with. There are presently no SQL or shell sinks on
+user input; those remain regression requirements if such features appear.
+
+\subsection{Pi Data Security and Availability}
+
+Plaintext HTTP for the dashboard and location service exposes imagery and
+location. Frames may contain PII; retention must be minimized. Uncapped MJPEG
+viewers create denial-of-service risk. systemd hardening should use a non-root
+account, \texttt{NoNewPrivileges=true}, and narrowly writable output paths.
+
+\subsection{Planned SIM/Cellular Upload Requirements}
+
+The SIM module is outbound-only to a fixed HTTPS cloud URL. Each Pi needs a
+unique revocable credential (not a shared fleet key), TLS, timestamp + nonce /
+request ID, body integrity (e.g.\ signed hash), and rotation/revocation. The
+cloud must reject unknown devices, bad signatures, stale timestamps, duplicate
+nonces, and oversized/invalid payloads. Queuing uses bounded retries and must
+never log credentials.
+
+\section{Subsystem Detail: Backend and Cloud Data Service}
+\label{sec:backend}
+\textit{Owner: Backend engineer (Amir Abdalla).}
+
+Production endpoint: \texttt{https://api-mu-ten-54.vercel.app}. Source:
+\texttt{api/}.
+
+\subsection{Implemented Controls}
+
+\begin{enumerate}
+    \item Least privilege: browsers never receive the Supabase secret.
+    \item Separate read/write API keys with fail-closed writes.
+    \item CORS Origin allowlist (local Vite defaults +
+          \texttt{CORS\_ALLOWED\_ORIGINS}).
+    \item Per-IP rate limiting (stricter on writes); HTTP 429 +
+          \texttt{Retry-After}.
+    \item Upload hardening: JPEG/PNG/WEBP, 10\,MB max, magic-byte verification,
+          sanitized UUID object keys.
+    \item Schema checks: metadata caps, enums, notes length, empty-detection
+          rejection.
+    \item Generic production 500 responses.
+    \item RLS script for \texttt{pothole\_reports}
+          (\texttt{api/supabase/rls\_pothole\_reports.sql}).
+\end{enumerate}
+
+\subsection{Backend Verification Evidence}
+
+\begin{itemize}
+    \item Unauthenticated GET/POST on production $\rightarrow$ HTTP 401.
+    \item Authorized GET with read key $\rightarrow$ HTTP 200.
+    \item Write key + empty detections $\rightarrow$ HTTP 400.
+    \item CORS preflight from unlisted Origin $\rightarrow$ HTTP 403.
+    \item CORS preflight from \texttt{http://localhost:5173} $\rightarrow$
+          HTTP 204 with allowlisted ACAO header.
+\end{itemize}
+
+\section{Subsystem Detail: Frontend Integration}
+\label{sec:frontend}
+\textit{Owner: Frontend / detection-app engineers.}
+
+\begin{itemize}
+    \item Streamlit loads \texttt{POTHOLE\_API\_WRITE\_KEY} from
+          \texttt{backend/.env} (never shown in UI) and posts over HTTPS.
+    \item Dashboard uses \texttt{VITE\_API\_READ\_KEY} only; GET-only; no
+          Supabase admin client.
+    \item Client-side filters complement, but do not replace, server validation.
+    \item Accepted limitation: the Vite read key is visible in the browser
+          bundle and is treated as a shared team token, not a root secret
+          (see AR-01).
+\end{itemize}
+
+\section{Reporting and Risk Mitigation Plan}
+\label{sec:reporting}
+
+\subsection{Vulnerability and Finding Register}
+
+Findings are tracked with severity, status, owner, and closure evidence. Status
+values: \textbf{Open}, \textbf{Mitigated}, \textbf{Accepted} (with
+justification), or \textbf{Closed} (fix + re-test passed).
+
+\begin{longtable}{p{0.10\textwidth}p{0.10\textwidth}p{0.10\textwidth}p{0.32\textwidth}p{0.28\textwidth}}
+\caption{Pi/SIM findings and mitigations}\label{tab:mitigations}\\
+\toprule
+ID & Severity & Status & Required mitigation & Closure / re-test evidence \\
+\midrule
+\endfirsthead
+\toprule
+ID & Severity & Status & Required mitigation & Closure / re-test evidence \\
+\midrule
+\endhead
+PI-01 & Critical & Open & Restrict dashboard network; add authentication/authorization. & Unauthenticated route tests denied; proxy/firewall reviewed. \\
+PI-02 & Critical & Open & HTTPS for all remote connections; replace plaintext location lookup. & Traffic capture shows TLS only. \\
+PI-03 & High & Open & Render location with DOM text APIs; validate response schema. & XSS payload displays as text only. \\
+PI-04 & High & Open & Cap MJPEG viewers; monitor resources. & Load test within agreed limits. \\
+PI-05 & High & Open & Per-device SIM auth, integrity, replay protection, revocation. & Forged/stale/duplicate uploads rejected. \\
+PI-06 & High & Open & Pin/audit dependencies; verify model checksums. & Manifest + audit + checksum log. \\
+PI-07 & Medium & Open & Validate configuration ranges; safe failure messages. & Automated boundary tests pass. \\
+PI-08 & Medium & Open & Output retention/quota; least-privilege service account. & Full-disk/retention tests; permission review. \\
+\bottomrule
+\end{longtable}
+
+\begin{longtable}{p{0.10\textwidth}p{0.10\textwidth}p{0.12\textwidth}p{0.30\textwidth}p{0.28\textwidth}}
+\caption{Cloud/frontend findings and mitigations}\label{tab:cloud-mitigations}\\
+\toprule
+ID & Severity & Status & Required mitigation & Closure / re-test evidence \\
+\midrule
+\endfirsthead
+\toprule
+ID & Severity & Status & Required mitigation & Closure / re-test evidence \\
+\midrule
+\endhead
+BE-01 & Critical & Closed & Write API key on mutations; fail closed. & Prod POST without key $\rightarrow$ 401. \\
+BE-02 & High & Closed & Read API key on report GETs. & Prod GET without key $\rightarrow$ 401; with key $\rightarrow$ 200. \\
+BE-03 & High & Closed & CORS allowlist instead of \texttt{*}. & Unlisted Origin $\rightarrow$ 403; local Vite allowed. \\
+BE-04 & High & Mitigated & Per-IP rate limits on API routes. & Burst returns 429 (in-memory limiter). \\
+BE-05 & High & Closed & Magic-byte + type + size upload checks. & Spoofed/oversized uploads rejected. \\
+BE-06 & High & Mitigated & Enable Supabase RLS; secret key server-only. & SQL script provided; confirm applied in project. \\
+BE-07 & Medium & Closed & Cap metadata/notes; reject empty detections. & Empty detection POST $\rightarrow$ 400. \\
+BE-08 & Medium & Closed & Generic production 500 bodies. & No stack/provider leakage in prod errors. \\
+FE-01 & High & Closed & Streamlit write key from env only. & Missing key blocks post; secret not in UI. \\
+FE-02 & High & Closed & Dashboard read-only API use. & Code review + GET-only traffic. \\
+FE-03 & Medium & Accepted & Document bundlable read key as team token. & See AR-01. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Accepted Risks (with Justification)}
+
+\begin{longtable}{p{0.10\textwidth}p{0.28\textwidth}p{0.28\textwidth}p{0.24\textwidth}}
+\caption{Accepted risks}\label{tab:accepted}\\
+\toprule
+ID & Risk & Justification / compensating control & Review date \\
+\midrule
+\endfirsthead
+\toprule
+ID & Risk & Justification / compensating control & Review date \\
+\midrule
+\endhead
+AR-01 & Dashboard read key visible in JS bundle. & Mid-project shared demo; key is read-only; writes still fail closed; rotate if leaked. & End of Week 12 \\
+AR-02 & Public Supabase image URLs. & Writes API-gated; RLS on table; migrate to signed URLs before public launch. & Before public demo \\
+AR-03 & No end-user login / RBAC yet. & Operator-only demo; API keys separate read/write; track Auth as future work. & Final delivery \\
+AR-04 & In-memory API rate limiter. & Adequate for single-region demo; distributed limiter/WAF later. & Production hardening \\
+\bottomrule
+\end{longtable}
+
+\subsection{Re-testing and Issue Closure Process}
+
+An issue is \textbf{Closed} only when all of the following are true:
+
+\begin{enumerate}
+    \item The fix is implemented and code-reviewed.
+    \item The mapped test IDs (A-/I-/D- or table testing focus) are re-run.
+    \item Evidence (request/response, scan excerpt, or review note) is attached to
+          the finding ID.
+    \item No regression appears in subsequent CI/manual smoke tests of auth,
+          validation, and TLS.
+\end{enumerate}
+
+\textbf{Accepted} risks require an owner, justification, compensating control,
+and a scheduled review date (Table~\ref{tab:accepted}). Open Pi items (PI-01--PI-08)
+remain the active remediation backlog for the edge device and SIM path.
+
+\section{Deferred Production Hardening}
+
+\begin{itemize}
+    \item End-user authentication (Supabase Auth / OAuth) and RBAC views.
+    \item Per-device Pi credentials with nonce/replay protection on cellular
+          upload.
+    \item Private storage with short-lived signed URLs.
+    \item Distributed rate limiting / WAF; CI-wired Bandit, Semgrep, ZAP, and
+          Gitleaks.
+\end{itemize}
+
+\section{Hardware and Physical Deployment}
+\label{sec:hardware}
+\textit{Owner: \underline{\hspace{4cm}} (to be completed by the hardware engineer).}
+
+This section must specify physical tamper controls, power protection,
+camera/privacy placement, cellular SIM management, exposed-port controls,
+lost-device response, and maintenance procedures.
+
+\appendix
+\section{Rubric Coverage Checklist}
+
+\begin{longtable}{p{0.28\textwidth}p{0.62\textwidth}}
+\caption{Mapping of this plan to the marking rubric}\label{tab:rubric}\\
+\toprule
+Rubric criterion & Where addressed \\
+\midrule
+\endfirsthead
+\toprule
+Rubric criterion & Where addressed \\
+\midrule
+\endhead
+Threat identification & Section~\ref{sec:threats}; Tables~\ref{tab:risks}, \ref{tab:cloud-risks} \\
+Risk prioritization (likelihood/impact) & Section~\ref{sec:threats} method + priority columns \\
+Risk $\leftrightarrow$ testing focus mapping & Final column of both risk registers \\
+SAST / DAST / manual / validation / auth testing & Section~\ref{sec:testing} \\
+Named tools (ZAP, Burp, Bandit, \ldots) & Section~\ref{sec:testing}, Table~\ref{tab:tools} \\
+Weak/missing auth tests & Section~\ref{sec:auth}, Table~\ref{tab:auth-tests} \\
+Password entropy & Section~\ref{sec:auth} \\
+Access privileges & Table~\ref{tab:privileges} \\
+SQL injection / XSS / command injection & Section~\ref{sec:validation}, Table~\ref{tab:inject-tests} \\
+Client- and server-side validation & Section~\ref{sec:validation} \\
+HTTPS/TLS; encryption at rest/in transit & Section~\ref{sec:data} \\
+Data leakage checks & Section~\ref{sec:data}, Table~\ref{tab:data-tests} \\
+Findings with severity; fixes; accepted risks; re-test closure & Section~\ref{sec:reporting} \\
+\bottomrule
+\end{longtable}
+
+\end{document}
