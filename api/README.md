@@ -6,6 +6,14 @@ It stores:
 - road images in Supabase Storage
 - JSON detection metadata per image
 - report fields like severity, status, location, and notes
+- temporary map coordinates + Toronto region IDs (until real GPS is available)
+
+## Architecture
+
+```
+Streamlit (detect) ──POST──► Vercel API ──► Supabase (DB + Storage)
+Dashboard (map)    ◄──GET──┘
+```
 
 ## Setup
 
@@ -16,7 +24,7 @@ cd api
 npm install
 ```
 
-2. Copy env values into `.env.local` (already created):
+2. Copy env values into `.env.local`:
 
 ```env
 SUPABASE_URL=
@@ -41,6 +49,8 @@ Open `http://localhost:3000`
 ### List reports
 `GET /api/reports`
 
+Optional query: `?region=<region_id_or_name>`
+
 ### Create report (upload image + JSON metadata)
 `POST /api/reports`
 
@@ -48,11 +58,13 @@ Use `multipart/form-data`:
 
 - `image` (required) — road image file
 - `annotated_image` (optional) — processed image with boxes
-- `metadata` (optional) — JSON string, e.g. detections from YOLO
-- `latitude`, `longitude` (optional)
+- `metadata` (optional) — JSON string; must include at least one detection
+- `latitude`, `longitude` (optional — if omitted, a temporary in-region coordinate is assigned)
 - `severity` — `critical`, `high`, `medium`, `low`
 - `status` — `pending`, `in_progress`, `repaired`
 - `notes` (optional)
+
+**Important:** requests with zero detections are rejected (HTTP 400). Only real pothole detections become dashboard markers.
 
 Example metadata:
 
@@ -61,67 +73,50 @@ Example metadata:
   "detections": [
     { "label": "pothole", "confidence": 0.87, "bbox": [120, 80, 220, 180] }
   ],
-  "model": "YOLOv8",
-  "source": "streamlit-demo"
+  "detection_count": 1,
+  "source": "streamlit"
 }
 ```
 
-### Create report (JSON only)
-`POST /api/reports`
+### Get / update / delete one report
+- `GET /api/reports/:id`
+- `PATCH /api/reports/:id`
+- `DELETE /api/reports/:id`
 
-Use `application/json` when the image is already uploaded somewhere else:
+### Backfill temporary locations
+`POST /api/reports/backfill-locations`
 
-```json
-{
-  "image_url": "https://example.com/photo.jpg",
-  "metadata": { "detections": [] },
-  "severity": "high",
-  "status": "pending"
-}
-```
+Assigns persistent temp coordinates to existing detection records that have no latitude/longitude yet.
 
-### Get one report
-`GET /api/reports/:id`
+## Temporary location behaviour
 
-### Update report
-`PATCH /api/reports/:id`
+When latitude/longitude are not provided, the API:
 
-Example:
+1. Picks a random Toronto neighborhood polygon (same GeoJSON the dashboard uses)
+2. Samples a point inside that polygon
+3. Stores `latitude`, `longitude`, `metadata.region_id`, `metadata.region_name`, and `metadata.temp_location=true`
 
-```json
-{
-  "status": "in_progress",
-  "severity": "critical",
-  "notes": "Scheduled for repair"
-}
-```
+Coordinates are **persisted in Supabase**, so they stay the same after dashboard refreshes.
 
-### Delete report
-`DELETE /api/reports/:id`
+**Limitation:** without a street network, points are guaranteed inside a region polygon, not necessarily on a painted road centerline. Replace this with real GPS later by sending `latitude`/`longitude` from Streamlit.
 
 ## Deploy to Vercel
 
-1. Push this repo to GitHub
-2. Go to [vercel.com](https://vercel.com) and import the repo
-3. Set **Root Directory** to `api`
-4. Add environment variables in Vercel:
-   - `SUPABASE_URL`
-   - `SUPABASE_PUBLISHABLE_KEY`
-   - `SUPABASE_SECRET_KEY`
-   - `SUPABASE_STORAGE_BUCKET`
-5. Deploy
+1. Deploy the `api` folder
+2. Add the same environment variables in Vercel
+3. Ensure `data/toronto_regions.geojson` is included (see `next.config.ts`)
 
 ## Test upload with curl
 
 ```bash
 curl -X POST http://localhost:3000/api/reports \
   -F "image=@/path/to/road.jpg" \
-  -F 'metadata={"detections":[{"label":"pothole","confidence":0.91}]}' \
+  -F 'metadata={"detections":[{"label":"pothole","confidence":0.91}],"detection_count":1}' \
   -F "severity=high" \
   -F "status=pending"
 ```
 
 ## Notes
 
-- YOLO detection should stay in the Python backend. This API stores results after detection.
+- YOLO detection stays in the Python/Streamlit backend.
 - `.env.local` is gitignored. Never commit real keys.

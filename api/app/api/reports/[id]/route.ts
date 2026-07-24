@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
-import { jsonError } from "@/lib/http";
+import { corsJson, corsPreflight, jsonError, publicError } from "@/lib/http";
+import { requireReadAuth, requireWriteAuth } from "@/lib/auth";
+import { enforceRateLimit } from "@/lib/rateLimit";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { deleteImageByUrl } from "@/lib/storage";
 import type { PotholeReport, ReportSeverity, ReportStatus, UpdateReportInput } from "@/lib/types";
@@ -23,7 +24,21 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export function OPTIONS(request: Request) {
+  return corsPreflight(request);
+}
+
+export async function GET(request: Request, context: RouteContext) {
+  const limited = enforceRateLimit(request, {
+    keyPrefix: "report-get",
+    limit: 60,
+    windowMs: 60_000,
+  });
+  if (limited) return limited;
+
+  const auth = requireReadAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const { id } = await context.params;
     const supabase = getSupabaseAdmin();
@@ -34,27 +49,39 @@ export async function GET(_request: Request, context: RouteContext) {
       .single();
 
     if (error) {
-      return jsonError(error.message, error.code === "PGRST116" ? 404 : 500);
+      if (error.code === "PGRST116") {
+        return jsonError("Report not found.", 404, request);
+      }
+      return publicError(error, request);
     }
 
-    return NextResponse.json({ report: data });
+    return corsJson({ report: data }, undefined, request);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error.";
-    return jsonError(message, 500);
+    return publicError(error, request);
   }
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
+  const limited = enforceRateLimit(request, {
+    keyPrefix: "report-patch",
+    limit: 30,
+    windowMs: 60_000,
+  });
+  if (limited) return limited;
+
+  const auth = requireWriteAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const { id } = await context.params;
     const body = (await request.json()) as UpdateReportInput;
 
     if (body.severity && !VALID_SEVERITIES.has(body.severity)) {
-      return jsonError("Invalid severity value.");
+      return jsonError("Invalid severity value.", 400, request);
     }
 
     if (body.status && !VALID_STATUSES.has(body.status)) {
-      return jsonError("Invalid status value.");
+      return jsonError("Invalid status value.", 400, request);
     }
 
     const updates = Object.fromEntries(
@@ -62,7 +89,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
 
     if (Object.keys(updates).length === 0) {
-      return jsonError("No fields provided to update.");
+      return jsonError("No fields provided to update.", 400, request);
     }
 
     const supabase = getSupabaseAdmin();
@@ -74,17 +101,29 @@ export async function PATCH(request: Request, context: RouteContext) {
       .single();
 
     if (error) {
-      return jsonError(error.message, error.code === "PGRST116" ? 404 : 500);
+      if (error.code === "PGRST116") {
+        return jsonError("Report not found.", 404, request);
+      }
+      return publicError(error, request);
     }
 
-    return NextResponse.json({ report: data });
+    return corsJson({ report: data }, undefined, request);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error.";
-    return jsonError(message, 500);
+    return publicError(error, request);
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
+  const limited = enforceRateLimit(request, {
+    keyPrefix: "report-delete",
+    limit: 20,
+    windowMs: 60_000,
+  });
+  if (limited) return limited;
+
+  const auth = requireWriteAuth(request);
+  if (!auth.ok) return auth.response;
+
   try {
     const { id } = await context.params;
     const supabase = getSupabaseAdmin();
@@ -96,7 +135,10 @@ export async function DELETE(_request: Request, context: RouteContext) {
       .single();
 
     if (fetchError) {
-      return jsonError(fetchError.message, fetchError.code === "PGRST116" ? 404 : 500);
+      if (fetchError.code === "PGRST116") {
+        return jsonError("Report not found.", 404, request);
+      }
+      return publicError(fetchError, request);
     }
 
     const report = existing as PotholeReport;
@@ -111,12 +153,11 @@ export async function DELETE(_request: Request, context: RouteContext) {
       .eq("id", id);
 
     if (deleteError) {
-      return jsonError(deleteError.message, 500);
+      return publicError(deleteError, request);
     }
 
-    return NextResponse.json({ success: true });
+    return corsJson({ success: true }, undefined, request);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error.";
-    return jsonError(message, 500);
+    return publicError(error, request);
   }
 }

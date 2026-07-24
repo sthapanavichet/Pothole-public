@@ -15,9 +15,52 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_API_URL = "https://api-mu-ten-54.vercel.app"
 
+_ENV_LOADED = False
+
+
+def _load_backend_env() -> None:
+    """Load backend/.env into os.environ if present (no python-dotenv required)."""
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    _ENV_LOADED = True
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.isfile(env_path):
+        return
+    try:
+        with open(env_path, encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError as exc:
+        logger.warning("Could not read backend/.env: %s", exc)
+
 
 def get_api_url() -> str:
+    _load_backend_env()
     return os.getenv("POTHOLE_API_URL", DEFAULT_API_URL).rstrip("/")
+
+
+def get_write_key() -> str | None:
+    _load_backend_env()
+    key = os.getenv("POTHOLE_API_WRITE_KEY", "").strip()
+    return key or None
+
+
+def auth_headers() -> dict[str, str]:
+    key = get_write_key()
+    if not key:
+        raise RuntimeError(
+            "Missing POTHOLE_API_WRITE_KEY. Set it in your environment "
+            "(or backend/.env) before posting reports."
+        )
+    return {"X-API-Key": key}
 
 
 def infer_severity(detections: list[dict[str, Any]]) -> str | None:
@@ -71,7 +114,7 @@ def post_image_report(
     if longitude is not None:
         form_data["longitude"] = str(longitude)
     if notes:
-        form_data["notes"] = notes
+        form_data["notes"] = notes[:2000]
 
     files = {
         "image": (original_filename, original_bytes, "image/jpeg"),
@@ -86,6 +129,7 @@ def post_image_report(
         f"{base_url}/api/reports",
         data=form_data,
         files=files,
+        headers=auth_headers(),
         timeout=120,
     )
     response.raise_for_status()

@@ -6,3 +6,5 @@
 /.venv
 /video_output
 *.mp4
+.env
+.env.local
