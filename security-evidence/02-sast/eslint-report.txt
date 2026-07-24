@@ -1,0 +1,25 @@
+Test ID: P2-SAST-05
+Date/time: 2026-07-24T01:02:43-04:00
+Tester/tool: Codex / npm script (ESLint)
+Tool version: package-local ESLint unavailable because dependencies are not installed
+Repository version: 81263265ce111468f9fac37818f920e1cd86a1a0
+Environment: local checkout; no package installation
+Targets: api and dashboard Node projects
+Sanitized commands:
+  api: npm run lint
+  dashboard: npm run lint
+Expected result: ESLint findings or clean completion.
+Actual result:
+  api:
+    > pothole-api@0.1.0 lint
+    > next lint
+    'next' is not recognized as an internal or external command.
+  dashboard:
+    > pothole-mapping-platform@0.0.0 lint
+    > eslint .
+    'eslint' is not recognized as an internal or external command.
+Status: Blocked
+Related risk/finding: none
+Evidence filename: eslint-report.txt
+Required next step: restore dependencies from committed lockfiles in a local isolated environment, then rerun project scripts.
+

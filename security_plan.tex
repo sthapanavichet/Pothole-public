@@ -179,7 +179,7 @@ API-key authentication:
           \texttt{/api/reports/backfill-locations};
     \item \textbf{Read privilege}: \texttt{API\_READ\_KEY} required for
           \texttt{GET /api/reports} and \texttt{GET /api/reports/[id]} when
-          configured (enforced in production);
+          configured (enforced by the reviewed source code);
     \item \textbf{Health}: \texttt{GET /api/health} remains unauthenticated but
           rate-limited.
 \end{itemize}
@@ -250,9 +250,9 @@ A-09 & (Future) weak Pi password / brute-force attempts. & Lockout/rate-limit; h
 \bottomrule
 \end{longtable}
 
-\textbf{Evidence already collected for cloud auth:} production
-\texttt{https://api-mu-ten-54.vercel.app} returns 401 for unauthenticated GET/POST
-and 200 for authorized GET with the read key.
+\textbf{Assessment status:} No production endpoints were contacted. Source review
+identifies the expected 401/200 authentication behavior; it must be verified in an
+authorized local or staging environment.
 
 \section{Input Validation and Injection Testing}
 \label{sec:validation}
@@ -327,7 +327,7 @@ I-10 & Extreme Pi env values (negative sizes, quality 999). & Safe rejection or 
 \subsection{Secure Transmission (HTTPS / TLS)}
 
 \begin{itemize}
-    \item \textbf{Cloud API and frontends:} production traffic uses HTTPS
+    \item \textbf{Cloud API and frontends:} the configured cloud endpoint uses HTTPS
           (\texttt{https://api-mu-ten-54.vercel.app}). Streamlit posts and
           dashboard fetches must target HTTPS URLs; no HTTP fallback for cloud
           calls.
@@ -360,8 +360,8 @@ Controls and checks:
 \begin{itemize}
     \item Frontends never embed \texttt{SUPABASE\_SECRET\_KEY} or
           \texttt{API\_WRITE\_KEY}.
-    \item Production API errors return generic messages (no stack traces or
-          provider internals).
+    \item Source review indicates that API errors return generic messages (no stack
+          traces or provider internals); verify this in staging.
     \item Rate limits and auth reduce anonymous bulk export of reports.
     \item Pi must not expose streams on public/cellular networks until auth and
           TLS exist; minimize retained frames and define retention before
@@ -425,7 +425,7 @@ DAST exercises a running service with crafted HTTP requests:
     \item \textbf{Burp Suite} --- manual intercept/replay of API requests to
           tamper with headers, bodies, cookies/tokens, and CORS preflights.
     \item \textbf{curl / HTTPie scripts} --- repeatable regression checks for
-          401/403/400/429 behaviour on production and local API.
+          401/403/400/429 behaviour on staging and local API.
 \end{itemize}
 
 DAST focuses on missing authentication, privilege escalation (read key used as
@@ -469,7 +469,7 @@ OWASP ZAP (DAST) & Pi dashboard; staging API & Scan summary + false-positive rev
 Burp Suite (DAST) & API request tampering & Request/response exports for A-/I-/D-cases. \\
 \texttt{pip-audit} / \texttt{npm audit} & Dependencies & Audit output; pinned versions. \\
 Gitleaks & Repo + history & No unreviewed secrets. \\
-curl regression scripts & Production API auth/CORS/validation & Timestamped command output. \\
+curl regression scripts & Staging API auth/CORS/validation & Timestamped command output. \\
 Load / concurrency tests & Pi MJPEG; API rate limits & Resource metrics; HTTP 429 proof. \\
 \bottomrule
 \end{longtable}
@@ -505,7 +505,7 @@ never log credentials.
 \label{sec:backend}
 \textit{Owner: Backend engineer (Amir Abdalla).}
 
-Production endpoint: \texttt{https://api-mu-ten-54.vercel.app}. Source:
+Configured cloud endpoint: \texttt{https://api-mu-ten-54.vercel.app}. Source:
 \texttt{api/}.
 
 \subsection{Implemented Controls}
@@ -521,15 +521,15 @@ Production endpoint: \texttt{https://api-mu-ten-54.vercel.app}. Source:
           sanitized UUID object keys.
     \item Schema checks: metadata caps, enums, notes length, empty-detection
           rejection.
-    \item Generic production 500 responses.
+    \item Generic API 500 responses (to be verified in staging).
     \item RLS script for \texttt{pothole\_reports}
           (\texttt{api/supabase/rls\_pothole\_reports.sql}).
 \end{enumerate}
 
-\subsection{Backend Verification Evidence}
+\subsection{Planned Backend Verification}
 
 \begin{itemize}
-    \item Unauthenticated GET/POST on production $\rightarrow$ HTTP 401.
+    \item Unauthenticated GET/POST in staging $\rightarrow$ HTTP 401.
     \item Authorized GET with read key $\rightarrow$ HTTP 200.
     \item Write key + empty detections $\rightarrow$ HTTP 400.
     \item CORS preflight from unlisted Origin $\rightarrow$ HTTP 403.
@@ -592,16 +592,16 @@ ID & Severity & Status & Required mitigation & Closure / re-test evidence \\
 ID & Severity & Status & Required mitigation & Closure / re-test evidence \\
 \midrule
 \endhead
-BE-01 & Critical & Closed & Write API key on mutations; fail closed. & Prod POST without key $\rightarrow$ 401. \\
-BE-02 & High & Closed & Read API key on report GETs. & Prod GET without key $\rightarrow$ 401; with key $\rightarrow$ 200. \\
-BE-03 & High & Closed & CORS allowlist instead of \texttt{*}. & Unlisted Origin $\rightarrow$ 403; local Vite allowed. \\
-BE-04 & High & Mitigated & Per-IP rate limits on API routes. & Burst returns 429 (in-memory limiter). \\
-BE-05 & High & Closed & Magic-byte + type + size upload checks. & Spoofed/oversized uploads rejected. \\
+BE-01 & Critical & Mitigated & Write API key on mutations; fail closed. & Staging POST without key $\rightarrow$ 401. \\
+BE-02 & High & Mitigated & Read API key on report GETs. & Staging GET without key $\rightarrow$ 401; with key $\rightarrow$ 200. \\
+BE-03 & High & Mitigated & CORS allowlist instead of \texttt{*}. & Unlisted staging Origin $\rightarrow$ 403; local Vite allowed. \\
+BE-04 & High & Mitigated & Per-IP rate limits on API routes. & Staging burst test returns 429 (in-memory limiter). \\
+BE-05 & High & Mitigated & Magic-byte + type + size upload checks. & Spoofed/oversized uploads rejected in staging. \\
 BE-06 & High & Mitigated & Enable Supabase RLS; secret key server-only. & SQL script provided; confirm applied in project. \\
-BE-07 & Medium & Closed & Cap metadata/notes; reject empty detections. & Empty detection POST $\rightarrow$ 400. \\
-BE-08 & Medium & Closed & Generic production 500 bodies. & No stack/provider leakage in prod errors. \\
-FE-01 & High & Closed & Streamlit write key from env only. & Missing key blocks post; secret not in UI. \\
-FE-02 & High & Closed & Dashboard read-only API use. & Code review + GET-only traffic. \\
+BE-07 & Medium & Mitigated & Cap metadata/notes; reject empty detections. & Empty detection POST $\rightarrow$ 400 in staging. \\
+BE-08 & Medium & Mitigated & Generic API 500 bodies. & No stack/provider leakage in staging errors. \\
+FE-01 & High & Mitigated & Streamlit write key from env only. & Staging test: missing key blocks post; secret not in UI. \\
+FE-02 & High & Mitigated & Dashboard read-only API use. & Source review + staging GET-only traffic. \\
 FE-03 & Medium & Accepted & Document bundlable read key as team token. & See AR-01. \\
 \bottomrule
 \end{longtable}
@@ -655,38 +655,34 @@ remain the active remediation backlog for the edge device and SIM path.
 
 \section{Hardware and Physical Deployment}
 \label{sec:hardware}
-\textit{Owner: \underline{\hspace{4cm}} (to be completed by the hardware engineer).}
 
-This section must specify physical tamper controls, power protection,
-camera/privacy placement, cellular SIM management, exposed-port controls,
-lost-device response, and maintenance procedures.
+Hardware and physical-deployment testing was outside the read-only Phase~1
+assessment: no device, camera, SIM, or deployed network was accessed. Before
+deployment, the team must document and review physical tamper controls, power
+protection, camera/privacy placement, cellular SIM management, exposed-port
+controls, lost-device response, and maintenance procedures.
 
 \appendix
-\section{Rubric Coverage Checklist}
+\section{Evidence Package}
+\label{sec:evidence-package}
 
-\begin{longtable}{p{0.28\textwidth}p{0.62\textwidth}}
-\caption{Mapping of this plan to the marking rubric}\label{tab:rubric}\\
+Assessment evidence is stored in \texttt{security-evidence/}.
+
+\begin{longtable}{p{0.28\textwidth}p{0.32\textwidth}p{0.30\textwidth}}
+\caption{Security assessment evidence package}\label{tab:evidence-package}\\
 \toprule
-Rubric criterion & Where addressed \\
+Evidence area & Contents & Files \\
 \midrule
 \endfirsthead
 \toprule
-Rubric criterion & Where addressed \\
+Evidence area & Contents & Files \\
 \midrule
 \endhead
-Threat identification & Section~\ref{sec:threats}; Tables~\ref{tab:risks}, \ref{tab:cloud-risks} \\
-Risk prioritization (likelihood/impact) & Section~\ref{sec:threats} method + priority columns \\
-Risk $\leftrightarrow$ testing focus mapping & Final column of both risk registers \\
-SAST / DAST / manual / validation / auth testing & Section~\ref{sec:testing} \\
-Named tools (ZAP, Burp, Bandit, \ldots) & Section~\ref{sec:testing}, Table~\ref{tab:tools} \\
-Weak/missing auth tests & Section~\ref{sec:auth}, Table~\ref{tab:auth-tests} \\
-Password entropy & Section~\ref{sec:auth} \\
-Access privileges & Table~\ref{tab:privileges} \\
-SQL injection / XSS / command injection & Section~\ref{sec:validation}, Table~\ref{tab:inject-tests} \\
-Client- and server-side validation & Section~\ref{sec:validation} \\
-HTTPS/TLS; encryption at rest/in transit & Section~\ref{sec:data} \\
-Data leakage checks & Section~\ref{sec:data}, Table~\ref{tab:data-tests} \\
-Findings with severity; fixes; accepted risks; re-test closure & Section~\ref{sec:reporting} \\
+Assessment overview & Scope, handling, status, and summary & \texttt{README.md}; \texttt{executive-summary.md} \\
+Scope and review & System, data-flow, route, and manual-review records & \texttt{00-scope/}; \texttt{01-manual-review/} \\
+Scan and dependency review & SAST, dependency, and secret-review outputs & \texttt{02-sast/}; \texttt{03-dependencies/}; \texttt{04-secrets/} \\
+Planned test procedures & Authentication through availability test plans & \texttt{05-authentication/} through \texttt{09-availability/} \\
+Results and closure & Test results, findings, remediation, and re-test records & \texttt{test-results.csv}; \texttt{findings-register.csv}; \texttt{10-findings/}; \texttt{11-closure/} \\
 \bottomrule
 \end{longtable}
 

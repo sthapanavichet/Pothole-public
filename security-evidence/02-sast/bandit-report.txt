@@ -1,0 +1,16 @@
+Test ID: P2-SAST-02
+Date/time: 2026-07-24T01:02:43-04:00
+Tester/tool: Codex / Bandit
+Tool version: unavailable (Bandit not installed)
+Repository version: 81263265ce111468f9fac37818f920e1cd86a1a0
+Environment: local checkout; read-only
+Target: Python applications
+Preconditions: Bandit executable locally available
+Sanitized command: bandit -r rpi_model backend Testing rpi_model_tests
+Expected result: complete Python security scan output
+Actual result: BLOCKED — `bandit` was not installed. No package installation was performed.
+Status: Blocked
+Related risk/finding: none
+Evidence filename: bandit-report.txt
+Required next step: install Bandit in an isolated local environment, then rerun this exact read-only scan.
+

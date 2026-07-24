@@ -1,0 +1,16 @@
+Test ID,Component,Route or call,Methods,Authentication and coverage,Input boundary,Data operation,Status,Evidence filename
+P1-ROUTE-02,Pi Flask vision service,/,GET,None found,No request parameters,Returns inline local dashboard HTML,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Pi Flask vision service,/stream/original.mjpg,GET,None found,No request parameters,Streams live original JPEG frames,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Pi Flask vision service,/stream/edges.mjpg,GET,None found,No request parameters,Streams processed JPEG frames,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Pi Flask vision service,/detections.json,GET,None found,No request parameters,Returns recent detection labels/time/location,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Local Flask image app,/,GET,None found,No request parameters,Renders upload form,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Local Flask image app,/upload,POST,None found,multipart file field `file`,Writes input image and annotated result to local static folders,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Local Flask image app,/static/<path:path>,GET,None found,Path parameter,Serves files under local static directory,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Next.js API,/api/health,GET OPTIONS,None found,Origin/request IP,Returns health JSON; rate limited,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Next.js API,/api/reports,GET OPTIONS,Read key required only when `API_READ_KEY` is configured,Optional `region` query; Origin; request IP,Reads `pothole_reports` via Supabase service client,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Next.js API,/api/reports,POST OPTIONS,Write key required,JSON or multipart image annotated_image metadata latitude longitude severity status notes,Uploads to Supabase Storage then inserts a report,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Next.js API,/api/reports/[id],GET OPTIONS,Read key required only when configured,Path id; Origin; request IP,Reads one report,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Next.js API,/api/reports/[id],PATCH OPTIONS,Write key required,Path id and JSON update fields,Updates report,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Next.js API,/api/reports/[id],DELETE OPTIONS,Write key required,Path id,Deletes two possible storage objects then report row,Observed,P1-ROUTE-02.md
+P1-ROUTE-02,Next.js API,/api/reports/backfill-locations,POST OPTIONS,Write key required,Origin/request IP,Updates reports with generated temporary locations,Observed,P1-ROUTE-02.md
+

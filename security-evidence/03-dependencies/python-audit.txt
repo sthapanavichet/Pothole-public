@@ -1,0 +1,13 @@
+Test ID: P3-DEP-01
+Date/time: 2026-07-24T01:02:43-04:00
+Tester/tool: Codex / pip-audit
+Tool version: unavailable (pip-audit not installed)
+Repository version: 81263265ce111468f9fac37818f920e1cd86a1a0
+Environment: local checkout; read-only
+Targets: backend/requirements.txt, backend/interface-app/requirements.txt, rpi_model/rpi_model/requirements.txt, codex-video-processing-docs/requirements.txt
+Sanitized command: pip-audit -r <each requirements file>
+Expected result: Python advisory report per requirements file.
+Actual result: BLOCKED — `pip-audit` unavailable; no installation or network package resolution performed.
+Status: Blocked
+Required next step: install pip-audit in an isolated environment and audit each requirements file.
+
