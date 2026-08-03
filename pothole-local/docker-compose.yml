@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: pothole-local-backend
+    ports:
+      - "8501:8501"
+    environment:
+      POTHOLE_API_URL: ${POTHOLE_API_URL:-https://api-mu-ten-54.vercel.app}
+      POTHOLE_API_WRITE_KEY: ${POTHOLE_API_WRITE_KEY:-}
+    volumes:
+      - ./backend:/app
+    command: streamlit run main.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true
+
+  dashboard:
+    build:
+      context: ./dashboard
+    container_name: pothole-local-dashboard
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-https://api-mu-ten-54.vercel.app}
+      VITE_API_READ_KEY: ${VITE_API_READ_KEY:-}
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0 --port 5173

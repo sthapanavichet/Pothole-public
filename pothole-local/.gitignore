@@ -1,0 +1,13 @@
+.env
+api/.env.local
+api/data/local-reports.json
+api/public/uploads/
+api/node_modules/
+api/.next/
+dashboard/node_modules/
+dashboard/dist/
+backend/.env
+backend/.venv/
+rpi_model/rpi_model/.env
+rpi_model/rpi_model/.venv/
+rpi_model/rpi_model/data/
