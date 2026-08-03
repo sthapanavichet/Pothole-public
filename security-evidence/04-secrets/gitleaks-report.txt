@@ -1,0 +1,13 @@
+Test ID: P3-SEC-01
+Date/time: 2026-07-24T01:02:43-04:00
+Tester/tool: Codex / Gitleaks
+Tool version: unavailable (Gitleaks not installed)
+Repository version: 81263265ce111468f9fac37818f920e1cd86a1a0
+Environment: local checkout; no secrets printed or saved
+Sanitized command: gitleaks detect --source . --log-opts="--all"
+Expected result: working-tree and Git-history secret scan.
+Actual result: BLOCKED — `gitleaks` unavailable. No installation was performed.
+Compensating manual review: candidate-pattern file paths only were reviewed; tracked `.env.example` files contain variable names; no tracked live `.env`, PEM, key, or credential file was listed. A simple history keyword scan returned commits mentioning security configuration, not evidence that no historical secret exists.
+Status: Blocked
+Required next step: run Gitleaks against the working tree and complete history in an isolated environment. If any secret is found, record type/location/exposure and rotation requirement only.
+

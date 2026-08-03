@@ -1,0 +1,15 @@
+Test ID: P2-SAST-06
+Date/time: 2026-07-24T01:02:43-04:00
+Tester/tool: Codex / TypeScript compiler via npx
+Tool version: unavailable (package-local TypeScript compiler not installed)
+Repository version: 81263265ce111468f9fac37818f920e1cd86a1a0
+Environment: local checkout; no package installation
+Target: api TypeScript project
+Sanitized command: npx tsc --noEmit
+Expected result: type-check results.
+Actual result: BLOCKED — npx reported that the TypeScript compiler was not installed and advised installing TypeScript. No installation was accepted or completed.
+Status: Blocked
+Related risk/finding: none
+Evidence filename: typescript-report.txt
+Required next step: restore dependencies from `api/package-lock.json` in an isolated local environment, then run `npx tsc --noEmit`.
+
