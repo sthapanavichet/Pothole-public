@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.env
+video_output
+inference_output
+inference_output_two_models
+interface-app/static/uploads/*
+interface-app/static/results/*

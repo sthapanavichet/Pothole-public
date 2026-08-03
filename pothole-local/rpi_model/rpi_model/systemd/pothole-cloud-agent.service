@@ -1,0 +1,16 @@
+[Unit]
+Description=Raspberry Pi pothole capture and cloud upload agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pothole-rpi
+EnvironmentFile=-/etc/pothole-cloud-agent.env
+ExecStart=/home/pi/pothole-rpi/.venv/bin/python /home/pi/pothole-rpi/dock_agent.py --api-url ${POTHOLE_API_URL} --candidate-model /home/pi/pothole-rpi/models/YOLOv8_Small_2nd_Model.pt
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
