@@ -2,3 +2,5 @@ picamera2
 opencv-python
 numpy
 flask
+requests
+ultralytics

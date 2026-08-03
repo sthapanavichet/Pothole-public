@@ -1,185 +1,96 @@
-# Raspberry Pi Object Detection Proof of Concept
+# Raspberry Pi Pothole Capture Package
 
-This folder contains a lightweight Raspberry Pi vision pipeline for detecting objects on paper. The goal is to prove that a small, local model-style pipeline can support the app concept without needing a large cloud model or heavy hardware.
-
-This direction was suggested by Jacky during our meeting: start with a simple object-detection proof of concept on paper, then use that result as the foundation for the full app workflow. The current implementation detects dark circular objects on a light paper background, counts them, outlines them, and streams the result to a browser.
-
-## What It Does
-
-The pipeline runs on a Raspberry Pi with a CSI camera. It:
-
-- captures live frames from the Raspberry Pi camera
-- converts each frame into an OpenCV image
-- blurs and thresholds the image to isolate dark objects on light paper
-- finds contours and filters them by area, radius, and circularity
-- draws circles and labels around detected objects
-- displays the current detection count and FPS
-- streams the live camera feed and detection view through a small Flask web server
-- optionally saves processed output frames for review
-
-This is intentionally small and readable. It is not the final production model, but it gives the team a working proof of concept for local object detection that can later be extended or replaced with a trained model.
-
-## Folder Contents
+This folder is self-contained for deployment to a Raspberry Pi 5 with a CSI camera. It runs the pothole-capable `YOLOv8_Small_2nd_Model.pt` candidate model locally, stores detected candidate images in a durable SQLite queue, and uploads them to the Vercel API when internet access is available.
 
 ```text
-rpi_model/
-|-- README.md
-|-- requirements.txt
-|-- main.py
-|-- camera.py
-|-- processing.py
-|-- config.py
-|-- utils.py
-|-- outputs/
-|   `-- .gitkeep
-`-- systemd/
-    `-- vision-pipeline.service
+camera -> Pi candidate YOLO -> local JPEG + SQLite queue -> Vercel API -> Supabase
 ```
 
-## File Overview
+`OFFLINE` means the Pi cannot reach the cloud API and retains captures locally. `CLOUD_CONNECTED` means the API health endpoint is available and queued images upload automatically.
 
-- `main.py` starts the camera, runs the processing loop, and serves the browser dashboard.
-- `camera.py` wraps `Picamera2` setup, frame capture, and shutdown.
-- `processing.py` contains the object-detection logic using OpenCV thresholding, contours, and circularity checks.
-- `config.py` stores camera size, detection thresholds, stream settings, and output-saving options.
-- `utils.py` contains small helper functions such as FPS calculation and output directory creation.
-- `requirements.txt` lists the Python dependencies used by the pipeline.
-- `outputs/` is reserved for saved detection frames when output saving is enabled.
-- `systemd/vision-pipeline.service` is a sample service file for running the pipeline automatically on a Raspberry Pi.
+## Copy To The Pi
 
-## Hardware Notes
+Copy this entire directory to `/home/pi/pothole-rpi`. The packaged model is in `models/YOLOv8_Small_2nd_Model.pt`; do not copy or run the old `main.py` paper-circle proof of concept.
 
-Expected setup:
+Expected deployment layout:
 
-- Raspberry Pi 5
-- Raspberry Pi Camera Module 2, IMX219
-- Pi 5 compatible camera ribbon cable
-- Raspberry Pi OS 64-bit
-- Camera connected to the Pi CSI camera connector
-- Paper target with dark circular objects for the proof-of-concept detection test
+```text
+/home/pi/pothole-rpi/
+    .env.example
+    setup_pi.sh
+    run_agent.sh
+    camera.py
+    candidate_detector.py
+    capture_store.py
+    dock_agent.py
+    requirements.txt
+    models/YOLOv8_Small_2nd_Model.pt
+    systemd/pothole-cloud-agent.service
+```
 
-Make sure the ribbon cable is fully seated and oriented correctly at both ends before testing the software.
+## First-Time Setup
 
-## Install
-
-On Raspberry Pi OS, prefer system packages for camera and OpenCV support:
+On the Pi, run:
 
 ```bash
-sudo apt update
-sudo apt install -y python3-picamera2 python3-opencv python3-numpy python3-flask
+cd /home/pi/pothole-rpi
+chmod +x setup_pi.sh run_agent.sh
+./setup_pi.sh
+nano .env
 ```
 
-Optional local environment for development:
+Set `POTHOLE_API_WRITE_KEY` in `.env` to the same secret configured as `API_WRITE_KEY` in the Vercel API project. Keep it private. The default `POTHOLE_API_URL` is already the deployed API.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-## Verify The Camera
-
-List detected cameras:
+Verify the CSI camera before starting detection:
 
 ```bash
 rpicam-hello --list-cameras
-```
-
-Capture a test image:
-
-```bash
 rpicam-still -o test.jpg
 ```
 
-If both commands work, the Raspberry Pi camera stack is likely configured correctly.
-
 ## Run
 
-From inside the `rpi_model/` folder:
+Start the real candidate detector and cloud uploader:
 
 ```bash
-python3 main.py
+./run_agent.sh --confidence 0.35 --candidate-interval 2 --capture-cooldown 15
 ```
 
-The app starts a browser dashboard at:
-
-```text
-http://127.0.0.1:5000/
-```
-
-From another device on the same network, replace the host with the Pi hostname or IP address:
-
-```text
-http://<pi-hostname>.local:5000/
-http://<pi-ip-address>:5000/
-```
-
-Direct stream URLs:
-
-```text
-http://<pi-hostname>.local:5000/stream/original.mjpg
-http://<pi-hostname>.local:5000/stream/edges.mjpg
-```
-
-## Detection Logic
-
-The proof-of-concept detector in `processing.py` follows this basic flow:
-
-1. Convert the camera frame from RGB to BGR for OpenCV.
-2. Convert the frame to grayscale.
-3. Apply a Gaussian blur to reduce noise.
-4. Threshold the image so dark objects on paper become foreground objects.
-5. Clean the thresholded image with a morphological open operation.
-6. Find contours.
-7. Filter contours by minimum area, maximum area, circularity, and radius.
-8. Draw the accepted detections and update the object count.
-
-The thresholds are in `config.py`, so the detection behavior can be tuned without changing the main code.
-
-## Output Saving
-
-Frame saving is controlled by `SAVE_OUTPUT` in `config.py`.
-
-Default:
-
-```python
-SAVE_OUTPUT = False
-```
-
-When enabled, processed frames are saved into `outputs/` at the configured `SAVE_INTERVAL`.
-
-## systemd Setup
-
-The repository includes a sample service file at `systemd/vision-pipeline.service`.
-
-Copy it into place:
+For a simple cloud-connection demonstration that saves a frame every five seconds without running YOLO:
 
 ```bash
-sudo cp systemd/vision-pipeline.service /etc/systemd/system/vision-pipeline.service
+./run_agent.sh --demo-capture-interval 5
 ```
 
-Reload systemd and enable the service:
+The terminal prints `MODE -> OFFLINE` while the cloud API is unreachable and `MODE -> CLOUD_CONNECTED` after it becomes reachable. Queue state is stored in `data/captures.db`, with camera images in `data/captures/`.
+
+## Start At Boot
+
+Create the protected environment file:
 
 ```bash
+sudo nano /etc/pothole-cloud-agent.env
+sudo chmod 600 /etc/pothole-cloud-agent.env
+```
+
+Add:
+
+```text
+POTHOLE_API_URL=https://api-mu-ten-54.vercel.app
+POTHOLE_API_WRITE_KEY=replace-with-your-api-write-key
+```
+
+Enable the service:
+
+```bash
+sudo cp systemd/pothole-cloud-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable vision-pipeline.service
-sudo systemctl start vision-pipeline.service
+sudo systemctl enable --now pothole-cloud-agent
+sudo systemctl status pothole-cloud-agent
 ```
 
-Check status:
+## Notes
 
-```bash
-sudo systemctl status vision-pipeline.service
-```
-
-Update the username, `WorkingDirectory`, and `ExecStart` values in the service file if the project path or Pi account is different.
-
-## Next Steps
-
-This folder is a proof of concept for the app. Good next steps are:
-
-- test with different paper layouts and lighting conditions
-- tune the values in `config.py`
-- save example detection outputs for documentation
-- connect the detection result to the main app workflow
-- replace or augment the OpenCV contour logic with a trained lightweight model when the target object set is finalized
+- This candidate model is approximately 85 MB. It detects road-damage classes including potholes, but it is not a tiny model. Start with a two-second candidate interval and tune it after measuring Pi CPU temperature and frame rate.
+- A GPS receiver is not connected yet. Captures include UTC time and `gps_status="unavailable"`; latitude and longitude are saved as null until GPS support is added.
+- The Vercel API stores candidate reports and images. It does not currently run a separate full YOLO model after upload.

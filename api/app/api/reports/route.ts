@@ -120,6 +120,11 @@ async function createReportFromFormData(request: Request) {
   const status = parseStatus(formData.get("status"));
   const notes = sanitizeNotes(readOptionalString(formData.get("notes")));
 
+  const existingResponse = await existingCaptureResponse(metadata, request);
+  if (existingResponse) {
+    return existingResponse;
+  }
+
   const imageUrl = await uploadImage(image, "original");
   let annotatedImageUrl: string | null = null;
 
@@ -192,6 +197,11 @@ async function insertReport(report: CreateReportInput, request: Request) {
 
   metadata.detection_count = detectionCount;
 
+  const existingResponse = await existingCaptureResponse(metadata, request);
+  if (existingResponse) {
+    return existingResponse;
+  }
+
   const withLocation = applyLocation({ ...report, metadata });
 
   const supabase = getSupabaseAdmin();
@@ -206,6 +216,31 @@ async function insertReport(report: CreateReportInput, request: Request) {
   }
 
   return corsJson({ report: data }, { status: 201 }, request);
+}
+
+async function existingCaptureResponse(
+  metadata: Record<string, unknown>,
+  request: Request
+): Promise<Response | null> {
+  const captureId =
+    typeof metadata.capture_id === "string" ? metadata.capture_id.trim() : "";
+  if (!captureId) {
+    return null;
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: existing, error } = await supabase
+    .from("pothole_reports")
+    .select("*")
+    .filter("metadata->>capture_id", "eq", captureId)
+    .maybeSingle();
+
+  if (error) {
+    return publicError(error, request);
+  }
+  return existing
+    ? corsJson({ report: existing, duplicate: true }, undefined, request)
+    : null;
 }
 
 function applyLocation(report: CreateReportInput): CreateReportInput {
