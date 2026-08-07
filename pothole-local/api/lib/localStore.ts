@@ -30,7 +30,15 @@ function writeReports(reports: PotholeReport[]) {
 }
 
 function originFromRequest(request: Request): string {
+  const configured = process.env.LOCAL_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "");
+  if (configured) {
+    return configured;
+  }
+
   const url = new URL(request.url);
+  if (url.hostname === "0.0.0.0") {
+    return `${url.protocol}//localhost:${url.port}`;
+  }
   return `${url.protocol}//${url.host}`;
 }
 
