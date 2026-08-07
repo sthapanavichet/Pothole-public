@@ -47,6 +47,30 @@ Open:
 
 If the Pi or another device cannot reach the PC, allow inbound Windows Firewall access for ports `3000`, `5173`, and `8501`.
 
+## Full Model Review Dashboard
+
+After the Pi uploads candidate captures, run the full YOLO model on the PC:
+
+```powershell
+cd "C:\Users\sthap\OneDrive\Desktop\Code\Sem 8\Capstone\Pothole\pothole-local"
+.\run-full-model-review.ps1 --limit 20
+```
+
+Then open the dashboard and select the `Review` tab:
+
+- candidate uploads show as `Pi candidate`
+- reviewed uploads show as `Full YOLO`
+- click an image to see the original upload with bounding boxes, confidence, labels, and bbox coordinates
+
+Useful options:
+
+```powershell
+.\run-full-model-review.ps1 --confidence 0.35 --limit 50
+.\run-full-model-review.ps1 --force --limit 50
+```
+
+Use `--force` if you want to re-run the full model on reports that were already reviewed.
+
 ## Pi Setup
 
 Copy or sync `rpi_model/rpi_model` to the Pi, then set `.env`:

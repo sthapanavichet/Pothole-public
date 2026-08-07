@@ -8,6 +8,8 @@ dashboard/node_modules/
 dashboard/dist/
 backend/.env
 backend/.venv/
+backend/__pycache__/
+backend/**/*.pyc
 rpi_model/rpi_model/.env
 rpi_model/rpi_model/.venv/
 rpi_model/rpi_model/data/

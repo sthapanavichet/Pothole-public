@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MapPin, Filter, Download, Calendar, AlertCircle, Eye, Search, RefreshCw, X, ArrowLeft } from 'lucide-react';
 import { MapContainer, GeoJSON, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -47,13 +47,18 @@ function MapBinder({ onReady }) {
 // Maps a raw backend report into the shape the map/UI already expects.
 function mapReport(r) {
   const meta = r.metadata || {};
-  const detections = Array.isArray(meta.detections) ? meta.detections : [];
+  const candidateDetections = Array.isArray(meta.detections) ? meta.detections : [];
+  const fullModel = meta.full_model && typeof meta.full_model === 'object' ? meta.full_model : null;
+  const fullModelDetections = Array.isArray(fullModel?.detections) ? fullModel.detections : [];
+  const detections = fullModelDetections.length ? fullModelDetections : candidateDetections;
   const confidences = detections
     .map((d) => Number(d.confidence))
     .filter((n) => !Number.isNaN(n));
   const confidence = confidences.length ? Math.max(...confidences) : null;
   const detectionCount =
-    typeof meta.detection_count === 'number' ? meta.detection_count : detections.length;
+    fullModelDetections.length ||
+    (typeof fullModel?.detection_count === 'number' ? fullModel.detection_count : null) ||
+    (typeof meta.detection_count === 'number' ? meta.detection_count : detections.length);
   const severity = severityColors[r.severity] ? r.severity : 'medium';
   const status = r.status === 'in_progress' ? 'inProgress' : r.status || 'pending';
 
@@ -68,11 +73,79 @@ function mapReport(r) {
     detected: new Date(r.created_at),
     imageUrl: r.annotated_image_url || r.image_url || null,
     originalImageUrl: r.image_url || null,
+    annotatedImageUrl: r.annotated_image_url || null,
     confidence,
     detectionCount,
+    detections,
+    candidateDetections,
+    fullModelDetections,
+    hasFullModel: Boolean(fullModel),
+    fullModelProcessedAt: fullModel?.processed_at ?? null,
+    fullModelImageWidth: fullModel?.image_width ?? null,
+    fullModelImageHeight: fullModel?.image_height ?? null,
     regionId: meta.region_id ?? null,
     regionName: meta.region_name ?? null,
   };
+}
+
+function DetectionImage({ src, detections = [], alt = 'Detection image', className = '' }) {
+  const imageRef = useRef(null);
+  const [size, setSize] = useState(null);
+  const boxes = detections.filter((d) => Array.isArray(d.bbox) && d.bbox.length === 4);
+
+  const updateSize = useCallback((img) => {
+    const rect = img.getBoundingClientRect();
+    setSize({
+      naturalWidth: img.naturalWidth || 1,
+      naturalHeight: img.naturalHeight || 1,
+      width: rect.width,
+      height: rect.height,
+    });
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (imageRef.current) updateSize(imageRef.current);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [updateSize]);
+
+  const pct = (value, total) => `${Math.max(0, Math.min(100, (Number(value) / total) * 100))}%`;
+
+  return (
+    <div className={`bg-gray-50 text-center ${className}`}>
+      <div className="relative inline-block max-w-full align-top">
+        <img
+          ref={imageRef}
+          src={src}
+          alt={alt}
+          onLoad={(e) => updateSize(e.currentTarget)}
+          className="block max-w-full max-h-80 object-contain bg-gray-50"
+        />
+        {size &&
+          boxes.map((d, idx) => {
+            const [x1, y1, x2, y2] = d.bbox.map(Number);
+            return (
+              <div
+                key={`${d.label || 'box'}-${idx}`}
+                className="absolute border-2 border-red-500 pointer-events-none"
+                style={{
+                  left: pct(x1, size.naturalWidth),
+                  top: pct(y1, size.naturalHeight),
+                  width: pct(x2 - x1, size.naturalWidth),
+                  height: pct(y2 - y1, size.naturalHeight),
+                }}
+              >
+                <span className="absolute left-0 top-0 -translate-y-full bg-red-600 text-white text-[11px] leading-none px-1.5 py-1 whitespace-nowrap">
+                  {d.label || 'pothole'} {Number.isFinite(Number(d.confidence)) ? `${(Number(d.confidence) * 100).toFixed(0)}%` : ''}
+                </span>
+              </div>
+            );
+          })}
+      </div>
+    </div>
+  );
 }
 
 // Fetches real pothole detections from the shared backend. This replaces the
@@ -380,7 +453,9 @@ const PotholeMappingPlatform = () => {
         try {
           const bounds = L.geoJSON(neighborhoodsFC.features[exact.idx]).getBounds();
           if (map && bounds.isValid()) map.fitBounds(bounds.pad(0.1));
-        } catch {}
+        } catch (err) {
+          console.warn('Failed to zoom to exact neighborhood match', err);
+        }
         return;
       }
     }
@@ -393,7 +468,9 @@ const PotholeMappingPlatform = () => {
         try {
           const bounds = L.geoJSON(neighborhoodsFC.features[fuzzy.idx]).getBounds();
           if (map && bounds.isValid()) map.fitBounds(bounds.pad(0.1));
-        } catch {}
+        } catch (err) {
+          console.warn('Failed to zoom to fuzzy neighborhood match', err);
+        }
         return;
       }
     }
@@ -450,12 +527,12 @@ const PotholeMappingPlatform = () => {
         {/* Left Sidebar */}
         <aside className="w-80 bg-white shadow-lg overflow-y-auto">
           {/* Tabs */}
-          <div className="flex border-b">
-            {['Summary', 'Filter', 'Query', 'Export', 'About'].map((tab) => (
+          <div className="grid grid-cols-3 border-b">
+            {['Summary', 'Review', 'Filter', 'Query', 'Export', 'About'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab.toLowerCase())}
-                className={`flex-1 px-4 py-3 font-medium transition-colors ${
+                className={`px-3 py-3 text-sm font-medium transition-colors ${
                   activeTab === tab.toLowerCase()
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-600 hover:bg-gray-100'
@@ -536,6 +613,79 @@ const PotholeMappingPlatform = () => {
                     <Eye size={18} />
                     Data Analytics
                   </button>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'review' && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800">Image Review</h2>
+                    <p className="text-xs text-gray-600">
+                      Full YOLO ready: {potholes.filter((p) => p.hasFullModel).length} of {potholes.length}
+                    </p>
+                  </div>
+                  <button
+                    onClick={reloadPotholes}
+                    className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-sm"
+                    title="Refresh detections"
+                  >
+                    <RefreshCw size={16} className={potholesLoading ? 'animate-spin' : ''} />
+                    Refresh
+                  </button>
+                </div>
+
+                {potholesLoading && <p className="text-sm text-gray-500">Loading images...</p>}
+                {potholesError && (
+                  <p className="text-sm text-red-600">Could not load images: {potholesError}</p>
+                )}
+                {!potholesLoading && potholes.length === 0 && (
+                  <p className="text-sm text-gray-600">No uploaded pothole images yet.</p>
+                )}
+
+                <div className="space-y-3">
+                  {potholes.slice(0, 40).map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => setSelectedPothole(p)}
+                      className="w-full text-left border rounded-lg overflow-hidden hover:shadow-md transition-shadow bg-white"
+                    >
+                      {p.imageUrl ? (
+                        <img
+                          src={p.imageUrl}
+                          alt="Detected pothole"
+                          className="w-full h-32 object-cover bg-gray-50"
+                        />
+                      ) : (
+                        <div className="w-full h-32 bg-gray-100 flex items-center justify-center text-gray-400 text-xs">
+                          No image
+                        </div>
+                      )}
+                      <div className="p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }} />
+                            <span className="text-sm font-semibold capitalize">{p.severity}</span>
+                          </div>
+                          <span
+                            className={`text-[11px] px-2 py-1 rounded-full ${
+                              p.hasFullModel
+                                ? 'bg-red-50 text-red-700'
+                                : 'bg-gray-100 text-gray-700'
+                            }`}
+                          >
+                            {p.hasFullModel ? 'Full YOLO' : 'Pi candidate'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          {p.detectionCount} detection{p.detectionCount === 1 ? '' : 's'}
+                          {p.confidence !== null ? `, ${(p.confidence * 100).toFixed(1)}% max confidence` : ''}
+                        </div>
+                        <div className="text-[11px] text-gray-500">{p.detected.toLocaleString()}</div>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
@@ -764,6 +914,7 @@ const PotholeMappingPlatform = () => {
                         />
                       )}
                       <div className="font-bold text-base capitalize">{p.severity} severity</div>
+                      <div>{p.hasFullModel ? 'Full YOLO reviewed' : 'Pi candidate only'}</div>
                       {p.confidence !== null && (
                         <div>Confidence: {(p.confidence * 100).toFixed(1)}%</div>
                       )}
@@ -869,21 +1020,48 @@ const PotholeMappingPlatform = () => {
                     <X size={18} />
                   </button>
                 </div>
-                {selectedPothole.imageUrl && (
-                  <img
-                    src={selectedPothole.imageUrl}
-                    alt="Detected pothole"
-                    className="w-full max-h-80 object-contain bg-gray-50"
+                {(selectedPothole.originalImageUrl || selectedPothole.imageUrl) && (
+                  <DetectionImage
+                    src={selectedPothole.originalImageUrl || selectedPothole.imageUrl}
+                    detections={selectedPothole.detections}
+                    alt="Detected pothole with bounding boxes"
+                    className="w-full p-2"
                   />
                 )}
                 <div className="p-4 space-y-1 text-sm text-gray-700">
                   <div>Region: <span className="font-medium">{selectedPothole.regionName || 'Unknown'}</span></div>
+                  <div>Model source: <span className="font-medium">{selectedPothole.hasFullModel ? 'Full YOLO model' : 'Pi candidate model'}</span></div>
+                  {selectedPothole.fullModelProcessedAt && (
+                    <div>Reviewed: <span className="font-medium">{new Date(selectedPothole.fullModelProcessedAt).toLocaleString()}</span></div>
+                  )}
                   {selectedPothole.confidence !== null && (
                     <div>Confidence: <span className="font-medium">{(selectedPothole.confidence * 100).toFixed(1)}%</span></div>
                   )}
                   <div>Detections in image: <span className="font-medium">{selectedPothole.detectionCount}</span></div>
                   <div>Status: <span className="font-medium capitalize">{selectedPothole.status === 'inProgress' ? 'In Progress' : selectedPothole.status}</span></div>
                   <div>Detected: <span className="font-medium">{selectedPothole.detected.toLocaleString()}</span></div>
+                  {selectedPothole.detections.length > 0 && (
+                    <div className="pt-3">
+                      <div className="font-semibold text-gray-800 mb-2">Bounding boxes</div>
+                      <div className="space-y-2">
+                        {selectedPothole.detections.map((d, idx) => (
+                          <div key={`${d.label || 'detection'}-${idx}`} className="rounded border bg-gray-50 p-2 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold">{d.label || 'pothole'}</span>
+                              {Number.isFinite(Number(d.confidence)) && (
+                                <span>{(Number(d.confidence) * 100).toFixed(1)}%</span>
+                              )}
+                            </div>
+                            {Array.isArray(d.bbox) && (
+                              <div className="text-gray-600 mt-1">
+                                bbox: [{d.bbox.map((v) => Number(v).toFixed(1)).join(', ')}]
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="text-xs text-gray-500 pt-1">
                     Coordinates: {selectedPothole.lat.toFixed(5)}, {selectedPothole.lng.toFixed(5)}
                   </div>
